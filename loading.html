@@ -1,0 +1,34 @@
+<!-- Loading message shown while R starts in the browser. It is placed inside
+     Shinylive's own loading screen, so it disappears together with that screen
+     when the calculator is ready. -->
+<template id="dmft-loading-tpl">
+  <div class="dmft-loading" style="position:absolute; left:0; right:0; top:calc(50% - 160px); padding:0 16px;
+       text-align:center; color:#52514e; font-family:system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
+    <div style="font-size:22px; font-weight:600; color:#075e5a;">Salivary biomarker DMFT calculator</div>
+    <div class="dmft-loading-msg" style="font-size:15px; margin-top:8px; line-height:1.5;">
+      Loading the calculator. The first visit takes about 10&ndash;30 seconds, because it runs R inside your browser.<br>
+      The values you enter never leave this device.
+    </div>
+  </div>
+</template>
+<script>
+  (function () {
+    var tpl = document.getElementById("dmft-loading-tpl");
+    var start = Date.now(), seen = false;
+    var timer = setInterval(function () {
+      var wrap = document.querySelector(".shinylive-viewer .loading-wrapper");
+      if (wrap) {
+        seen = true;
+        if (!wrap.querySelector(".dmft-loading")) wrap.appendChild(tpl.content.cloneNode(true));
+        var msg = wrap.querySelector(".dmft-loading-msg");
+        if (msg && !msg.dataset.slow && Date.now() - start > 40000) {
+          msg.dataset.slow = "1";
+          msg.innerHTML = "Still loading. On a slow connection the first visit can take up to a minute.<br>" +
+            "The values you enter never leave this device.";
+        }
+      } else if (seen || Date.now() - start > 300000) {
+        clearInterval(timer);
+      }
+    }, 100);
+  })();
+</script>
