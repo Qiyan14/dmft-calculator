@@ -4,11 +4,17 @@ Estimate an individual's probability of high DMFT (DMFT > 13) from six salivary 
 
 ### [Open the calculator →](https://qiyan14.github.io/dmft-calculator/)
 
-The calculator runs entirely in your web browser: there is nothing to install, and the values you enter are not sent to or stored on any server. The first visit takes about 10–30 seconds while R starts in the browser.
+The calculator now contains **Train Your Own Data** and **Risk Calculator** tabs. It runs entirely in your web browser: there is nothing to install, and the values you enter are not sent to or stored on any server. The first visit takes about 10–30 seconds while R starts in the browser.
 
 ![The calculator with example values](screenshot.png)
 
-## How to use it
+## Train Your Own Data
+
+Select **Train Your Own Data** on the navigation bar, then upload participant information and biomarker measurements as CSV files (or use the simulated example). Match IDs, choose the outcome groups and numeric biomarkers, and configure cross-validation and 1–6 marker panel search. The Results tab displays ranked panels and ROC curves; **Train a model** refits a selected panel to the uploaded participants and saves a CSV coefficient table usable by the Risk Calculator.
+
+The browser edition supports CSV/TSV/TXT without any additional R packages. Excel read/write support depends on the availability of precompiled readxl/writexl packages and should not be assumed on GitHub Pages; use CSV for reliable uploads and downloads. Large exhaustive searches consume substantial browser CPU and memory. Start with a small biomarker subset and keep the tab open until the search finishes. Panel-selection performance is development-only and can be optimistic.
+
+## How to use the Risk Calculator
 
 1. Keep **Published DMFT model** selected.
 2. Enter the six biomarkers as **absolute raw concentration values**, exactly as reported by the laboratory and in the units used to develop the model. Do not log-transform or standardize them or convert them to relative abundance, and enter 0 if a biomarker was not detected.
@@ -41,4 +47,4 @@ Manuscript in preparation.
 
 ## About this repository
 
-`app/app.R` is the calculator, an R Shiny app; `shiny::runApp("app")` runs it locally. `docs/` is the same app built with [Shinylive](https://posit-dev.github.io/r-shinylive/) so that it runs in the browser, and GitHub Pages serves the website from there. [PUBLISHING.md](PUBLISHING.md) explains how to publish and update the site.
+`app/app.R` contains both training and risk prediction, as an R Shiny app; `shiny::runApp("app")` runs it locally. `docs/` is the same app built with [Shinylive](https://posit-dev.github.io/r-shinylive/) so that it runs in the browser, and GitHub Pages serves the website from there. [PUBLISHING.md](PUBLISHING.md) explains how to publish and update the site.
