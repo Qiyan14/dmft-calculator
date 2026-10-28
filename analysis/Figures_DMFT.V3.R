@@ -19,7 +19,7 @@
 #    sizes, ties by AUC): one row per participant, LD above the line and HD
 #    below; each column scaled 0-1; DMFT and the mean out-of-fold P(HD) per
 #    row; participants misclassified at the cutoff highlighted.
-# Original cyan–pink heatmap; misclassified rows have translucent highlighting and black outlines.
+# Original cyan–pink heatmap; misclassified DMFT/probability labels are highlighted, with heatmap row outlines.
 #
 # Also written (CSV): the refit check, the
 # participants' mean P(HD), and the coefficients of the best overall panel
@@ -699,9 +699,10 @@ draw_heatmap <- function(hm, W, Ht) {
   xl <- rep(x_left, each = n); yb <- rep(row_b, times = length(x_left))
   rect(xl, yb, xl + cw, yb + rh, col = as.vector(colm), border = "white", lwd = 0.5)
 
-  # Highlight misclassified rows and retain one box around each complete heatmap row.
+  # Highlight only DMFT/probability labels; keep all heatmap cell fills unchanged.
+  # Retain one unfilled box around each misclassified heatmap row.
   if (any(hm$mis)) {
-    rect(x_lab0, row_b[hm$mis], x_end, row_t[hm$mis],
+    rect(x_lab0, row_b[hm$mis], x0 - 0.02, row_t[hm$mis],
          col = grDevices::adjustcolor("#F4B183", 0.55), border = NA)
     rect(x0, row_b[hm$mis], x_end, row_t[hm$mis],
          col = NA, border = "black", lwd = 1.2)
