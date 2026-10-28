@@ -19,7 +19,7 @@
 #    sizes, ties by AUC): one row per participant, LD above the line and HD
 #    below; each column scaled 0-1; DMFT and the mean out-of-fold P(HD) per
 #    row; participants misclassified at the cutoff highlighted.
-# Blue/orange heatmap; black outlines identify misclassified cells.
+# Original cyan–pink heatmap; misclassified rows have translucent highlighting and black outlines.
 #
 # Also written (CSV): the refit check, the
 # participants' mean P(HD), and the coefficients of the best overall panel
@@ -58,7 +58,7 @@ HEATMAP_CUTOFF     <- "pooled" # "pooled": the panel's Youden cut on the pooled 
                                #   participants' mean P(HD); or a number, e.g. 0.5
 HEATMAP_ORDER      <- "dmft"   # rows within each group: "dmft" (DMFT, then P(HD)) or "probability"
 HEATMAP_COVARIATES <- TRUE     # covariate columns after the markers
-HEATMAP_PALETTE    <- "blue_orange"     # two endpoint colours: blue (low) and orange (high)
+HEATMAP_PALETTE    <- "cm"     # original cyan–white–pink palette
 HEATMAP_ROW_IN     <- 0.06     # row height in inches; the figure height follows (111 rows: ~9.3 in)
 
 # Marker names on the figures
@@ -699,12 +699,16 @@ draw_heatmap <- function(hm, W, Ht) {
   xl <- rep(x_left, each = n); yb <- rep(row_b, times = length(x_left))
   rect(xl, yb, xl + cw, yb + rh, col = as.vector(colm), border = "white", lwd = 0.5)
 
-  # Misclassified participants: outline every cell without changing its fill.
-  if (any(hm$mis)) for (xx in x_left)
-    rect(xx, row_b[hm$mis], xx + cw, row_t[hm$mis], col = NA, border = "black", lwd = 1.2)
+  # Highlight misclassified rows and retain one box around each complete heatmap row.
+  if (any(hm$mis)) {
+    rect(x_lab0, row_b[hm$mis], x_end, row_t[hm$mis],
+         col = grDevices::adjustcolor("#F4B183", 0.55), border = NA)
+    rect(x0, row_b[hm$mis], x_end, row_t[hm$mis],
+         col = NA, border = "black", lwd = 1.2)
+  }
 
   # row labels
-  lab_col <- "black"; lab_font <- ifelse(hm$mis, 2, 1)
+  lab_col <- "black"; lab_font <- 1
   ymid <- (row_t + row_b) / 2
   if (!all(is.na(hm$dmft)))
     text(x_dmft, ymid, ifelse(is.na(hm$dmft), "", format(hm$dmft, trim = TRUE)), cex = cex_row, col = lab_col, font = lab_font)
@@ -738,7 +742,8 @@ draw_heatmap <- function(hm, W, Ht) {
   text(x0 + bw, y1 - 0.11, "1", adj = c(0.5, 1), cex = 0.75)
   text(x0 + bw + 0.15, y1, "Scaled 0 (lowest) to 1 (highest) within each column", adj = c(0, 0.5), cex = 0.85)
   y2 <- y1 - 0.42
-  rect(x0, y2 - 0.065, x0 + 0.3, y2 + 0.065, col = NA, border = "black", lwd = 1.2)
+  rect(x0, y2 - 0.065, x0 + 0.3, y2 + 0.065,
+       col = grDevices::adjustcolor("#F4B183", 0.55), border = "black", lwd = 1.2)
   text(x0 + 0.45, y2, "Misclassified at the cutoff: false positive above the line, false negative below",
        adj = c(0, 0.5), cex = 0.85)
 }
