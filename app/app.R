@@ -8,30 +8,27 @@
 #      groups, search logistic regression panels with repeated cross-validation,
 #      train a model from any panel and download the results.
 #   2. Patient prediction - enter absolute raw concentration values to estimate
-#      the risk of high DMFT with the selected six-marker model, or
+#      the risk of high DMFT with the selected age/BMI model, or
 #      with a model trained in task 1 (or loaded from a saved model file).
 #      The page shows the equation with its coefficients, the calculation for
 #      the values entered, a speedometer gauge of the estimate and, for models
-#      with age and sex, risk curves across age for each sex.
+#      with age and BMI, risk curves across age at two BMI values.
 #
 # Run:   shiny::runApp("app.R")      (or open in RStudio and click Run App)
 # Needs: shiny. Optional: readxl (Excel uploads) and writexl (Excel downloads);
 #        without them, upload and download CSV files.
 #
 # Two versions are built from this file:
-#   Desktop - this file, run in a local R session. A dmft_selected_model.csv
-#             (exported by Figures_DMFT.V3.R) placed next to it replaces the
+#   Desktop - this file, run in a local R session. A dmft_age_bmi_model.csv
+#             (exported by 03_Figures_DMFT_Age_BMI.R) placed next to it replaces the
 #             bundled coefficients after it passes the checks below.
 #   Browser - app/app.R in the dmft-calculator repository: this file with the
 #             bundled coefficients only (see the PUB line in section 11),
 #             compiled by build.R with Shinylive to run R in the browser (webR).
 #
-# Selected model: six biomarkers + age + sex, chosen across four configurations.
-# Full-precision coefficients are bundled below. Sex uses the source codes
-# 1 = female (reference) and 2 = male; the app shows the labels.
+# Study specification: age + BMI; exhaustive sizes 1–2, beam from 3.
+# The previous age/sex model is intentionally not bundled. Load the new export.
 # ==========================================================================
-
-APP_VERSION <- "6.0 (October 2026)"
 
 suppressPackageStartupMessages(library(shiny))
 HAS_READXL  <- requireNamespace("readxl", quietly = TRUE)
@@ -46,40 +43,24 @@ MINUS <- "−"
 # 1) THE PUBLISHED MODEL
 # ==========================================================================
 # Raw-input form: logit p(HD) = intercept + sum_j coef_j * log2(x_j + delta)
-#                               + coef_age * Age + coef_sex * I(Sex = nonreference level)
+#                               + coef_age * Age + coef_bmi * BMI
 # (the log2 transform is applied to the raw value; the LD-group centring and
 # scaling used in fitting are absorbed into the intercept and slopes).
 
 PUBLISHED_MODEL <- list(
-  source = "published", name = "Selected DMFT model (age + sex)",
-  description = "Six salivary biomarkers with age and sex (logistic regression).",
+  source = "published", name = "DMFT model (age + BMI; rerun required)",
+  description = "Load the fitted age/BMI model exported after the revised panel search.",
   case_label = "high DMFT (DMFT > 13)", ref_label = "low DMFT (DMFT ≤ 13)",
   case_short = "HD", ref_short = "LD", transform = "log2", delta = 5e-7,
-  intercept = -59.61927668169686,
-  markers = data.frame(
-    key = c("Bacteroidetes_G5_bacterium_HMT_511", "Prevotella_sp._HMT_475",
-            "Lactobacillus_Lactobacillus_unclassified", "Bacteroidetes_G5_Bacteroidetes_G5_unclassified",
-            "Bacteroides_heparinolyticus", "Peptostreptococcaceae_G3_bacterium_HMT_950"),
-    abbr = c("B511", "P475", "LAC", "BG5", "BH", "P950"),
-    label = c("Bacteroidetes G5 bacterium HMT 511", "*Prevotella* sp. HMT 475",
-              "unclassified *Lactobacillus*", "unclassified Bacteroidetes G5",
-              "*Bacteroides heparinolyticus*", "Peptostreptococcaceae G3 bacterium HMT 950"),
-    coef = c(-0.039074625958201936, 0.062822476580071382, 0.079517386755282984,
-             -0.95827948205066982, -0.89043902031579725, -0.88287872589894956), stringsAsFactors = FALSE),
-  covariates = data.frame(var = c("Age_DOS", "Sex"), term = c("Age_DOS", "Sex=2"),
-    abbr = c("Age", "Male"), label = c("Age", "Male sex (vs female)"),
-    unit = c("years", ""), type = c("numeric", "factor"), level = c(NA, "2"),
-    coef = c(0.1178751841582006, 0.11282243181054701), stringsAsFactors = FALSE),
-  cov_levels = list(Sex = c("1", "2")),
-  # Source codes and their meanings; code 1 (female) is the reference category
-  level_labels = list(Sex = c("1" = "Female", "2" = "Male")),
-  threshold = 0.4511200806,
-  cohort = "111 adults: 56 with DMFT ≤ 13 and 55 with DMFT > 13.",
-  performance = c("Balanced accuracy" = 0.8835795455, "Sensitivity" = 0.9109090909,
-                  "Specificity" = 0.85625, "AUC" = 0.8900374026),
-  performance_note = paste("Five-fold cross-validation repeated 100 times. Best retained panel across four configurations;",
-    "selection and threshold tuning used these predictions. Development performance may be optimistic; not externally validated."),
-  caution = "Exploratory model; some biomarker coefficient estimates are unstable. Female is the reference sex category."
+  intercept = NA_real_,
+  markers = data.frame(key=character(), abbr=character(), label=character(), coef=numeric()),
+  covariates = data.frame(var=c("Age_DOS","BMI"), term=c("Age_DOS","BMI"),
+    abbr=c("Age","BMI"), label=c("Age","Body mass index"), unit=c("years","kg/m²"),
+    type=c("numeric","numeric"), level=c(NA_character_,NA_character_), coef=c(NA_real_,NA_real_)),
+  cov_levels=list(), level_labels=list(), threshold=NA_real_,
+  cohort="Age/BMI model results are pending the revised analysis.",
+  performance=NULL, performance_note=NULL,
+  caution="Load dmft_age_bmi_model.csv from the rerun. Previous age/sex coefficients and performance do not apply."
 )
 
 # Display label of a factor level (the level itself when the model has no labels)
@@ -94,39 +75,39 @@ level_choices <- function(m, v, lv) stats::setNames(lv, level_label(m, v, lv))
 EXAMPLE <- list(markers = c(1, 1, 1, 0, 0, 0), covariates = c(40, NA))
 
 model_ready <- function(m) {
-  !is.null(m) && is.finite(m$intercept) && all(is.finite(m$markers$coef)) &&
+  !is.null(m) && nrow(m$markers) > 0L && is.finite(m$threshold) && is.finite(m$intercept) && all(is.finite(m$markers$coef)) &&
     (nrow(m$covariates) == 0 || all(is.finite(m$covariates$coef)))
 }
 
 # Load only an explicitly named, complete model export; never reuse a legacy file.
-load_published_coefficients <- function(model, dir = getwd()) {
-  f <- file.path(dir, "dmft_selected_model.csv")
-  if (!file.exists(f)) return(list(model = model, msg = NULL))
-  tryCatch({
-    tab <- utils::read.csv(f, stringsAsFactors = FALSE, check.names = FALSE)
-    m <- model_from_table(tab, basename(f))
-    if (!model_ready(m) || !setequal(m$markers$key, model$markers$key) ||
-        !setequal(unique(m$covariates$var), c("Age_DOS", "Sex")) ||
-        m$transform != "log2" || abs(m$delta - 5e-7) > 1e-15 ||
-        abs(m$threshold - model$threshold) > 1e-8 ||
-        !any(tab$Term == "(Reference level: Sex)")) stop("Export does not match the selected age-and-sex panel.")
-    m$markers <- m$markers[match(model$markers$key, m$markers$key), , drop = FALSE]
-    m$markers$label <- model$markers$label; m$markers$abbr <- model$markers$abbr
-    # Sex coding must match the bundled model (reference code 1 = female, indicator for code 2)
-    if (!identical(m$cov_levels$Sex, model$cov_levels$Sex) ||
-        !identical(m$covariates$level[m$covariates$var == "Sex"], "2"))
-      stop("Sex coding in the export differs from the bundled model (reference 1 = female, indicator 2 = male).")
-    for (i in seq_len(nrow(m$covariates))) {
-      k <- which(model$covariates$var == m$covariates$var[i] &
-                 (model$covariates$type == "numeric" | model$covariates$level %in% m$covariates$level[i]))
-      if (length(k) == 1) m$covariates[i, c("abbr", "label", "unit")] <- model$covariates[k, c("abbr", "label", "unit")]
-    }
-    for (nm in c("source", "name", "description", "cohort", "performance", "performance_note", "caution", "level_labels"))
-      m[[nm]] <- model[[nm]]
-    list(model = m, msg = "Complete selected-model coefficients and sex coding loaded.")
-  }, error = function(e) list(model = model, msg = paste("Model export was not used:", conditionMessage(e))))
+selected_age_bmi_model <- function(tab, filename = "dmft_age_bmi_model.csv") {
+  m <- model_from_table(tab, filename)
+  meta <- function(key) tab$Label[tab$Term == key]
+  if (sum(tab$Term == "(Threshold)") != 1L ||
+      !is.finite(as.numeric(tab$Coefficient_raw_input[tab$Term == "(Threshold)"])) ||
+      m$threshold <= 0 || m$threshold >= 1 ||
+      !model_ready(m) || !setequal(unique(m$covariates$var), c("Age_DOS","BMI")) ||
+      !all(m$covariates$type == "numeric") || m$transform != "log2" ||
+      abs(m$delta - 5e-7) > 1e-15 ||
+      !identical(meta("(Model configuration)"), "Biomarkers_Age_BMI") ||
+      !identical(meta("(Search design)"), "exhaustive12_beam3"))
+    stop("Use dmft_age_bmi_model.csv exported after the new age/BMI search (exhaustive sizes 1–2, beam from 3).")
+  m$analysis_configuration <- "Biomarkers_Age_BMI"; m$search_design <- "exhaustive12_beam3"
+  m$source <- "published"; m$name <- "Selected DMFT model (age + BMI)"
+  m$description <- sprintf("%d salivary biomarkers with age and BMI.", nrow(m$markers))
+  m$covariates$label <- ifelse(m$covariates$var=="BMI","Body mass index","Age")
+  m$covariates$unit <- ifelse(m$covariates$var=="BMI","kg/m²","years")
+  m$cohort <- "See the rerun analysis workbook for cohort size and cross-validated performance."
+  m$caution <- "Development model; independent validation is required."
+  m
 }
-
+load_published_coefficients <- function(model, dir = getwd()) {
+  f <- file.path(dir, "dmft_age_bmi_model.csv")
+  if (!file.exists(f)) return(list(model=model, msg=NULL))
+  tryCatch(list(model=selected_age_bmi_model(utils::read.csv(f, stringsAsFactors=FALSE),basename(f)),
+                msg="Age/BMI model loaded."),
+           error=function(e) list(model=model,msg=conditionMessage(e)))
+}
 
 # ==========================================================================
 # 2) SMALL HELPERS
@@ -550,6 +531,10 @@ level_candidates <- function(job, k) {
   p <- job$p
   if (k == 1L) return(list(cand = matrix(seq_len(p), nrow = 1), mode = "exhaustive"))
   n_all <- choose(p, k)
+  if (k == 2L) {
+    if (n_all > HARD_EXHAUSTIVE_MAX) stop("Exhaustive two-marker search exceeds the browser limit; use the desktop analysis script or fewer candidate markers.")
+    return(list(cand=utils::combn(p, k), mode="exhaustive"))
+  }
   want_exh <- job$s$search_mode == "exhaustive" ||
               (job$s$search_mode == "auto" && n_all <= job$s$exhaustive_limit)
   if (want_exh && n_all <= HARD_EXHAUSTIVE_MAX) return(list(cand = utils::combn(p, k), mode = "exhaustive"))
@@ -690,7 +675,7 @@ assemble_results <- function(job) {
 project_runtime <- function(job) {
   p <- job$p; K <- job$k_max; nb <- job$s$beam
   counts <- vapply(seq_len(K), function(k) {
-    if (k == 1) return(p)
+    if (k <= 2) return(choose(p, k))
     n_all <- choose(p, k)
     exh <- job$s$search_mode == "exhaustive" || (job$s$search_mode == "auto" && n_all <= job$s$exhaustive_limit)
     if (exh && n_all <= HARD_EXHAUSTIVE_MAX) n_all else min(n_all, min(nb, choose(p, k - 1)) * (p - k + 1))
@@ -788,6 +773,9 @@ fit_panel_model <- function(res, k, rank) {
 model_to_table <- function(m) {
   tr <- if (m$transform == "log2") sprintf("log2(raw value + %s)", format(m$delta)) else "raw value"
   rbind(
+    if (!is.null(m$analysis_configuration)) data.frame(
+      Term = c("(Model configuration)", "(Search design)"),
+      Label = c(m$analysis_configuration, m$search_design), Coefficient_raw_input = NA_real_, Input = ""),
     data.frame(Term = "(Intercept)", Label = "Intercept", Coefficient_raw_input = m$intercept, Input = "", stringsAsFactors = FALSE),
     if (nrow(m$covariates)) data.frame(Term = m$covariates$term, Label = m$covariates$label, Coefficient_raw_input = m$covariates$coef,
                                        Input = ifelse(m$covariates$type == "factor",
@@ -924,33 +912,33 @@ age_slider_limits <- function(m, v) {
   c(if (identical(m$source, "published")) 18 else 0, max(100, ceiling(middle)))
 }
 
-age_sex_variables <- function(m) {
+age_bmi_variables <- function(m) {
   if (is.null(m) || !nrow(m$covariates)) return(NULL)
   age <- unique(m$covariates$var[is_age_variable(m$covariates$var) & m$covariates$type == "numeric"])
-  sex <- unique(m$covariates$var[tolower(m$covariates$var) == "sex" & m$covariates$type == "factor"])
-  if (length(age) != 1 || length(sex) != 1 || length(m$cov_levels[[sex]]) < 2) return(NULL)
-  list(age = age, sex = sex)
+  bmi <- unique(m$covariates$var[tolower(m$covariates$var) == "bmi" & m$covariates$type == "numeric"])
+  if (length(age) != 1 || length(bmi) != 1) return(NULL)
+  list(age = age, bmi = bmi)
 }
 
-age_sex_curve_data <- function(m, marker_vals, cov_vals, ages) {
-  vars <- age_sex_variables(m)
-  if (is.null(vars)) stop("Comparison requires numeric age and categorical sex in the model.")
+age_bmi_curve_data <- function(m, marker_vals, cov_vals, ages) {
+  vars <- age_bmi_variables(m)
+  if (is.null(vars)) stop("Comparison requires numeric age and numeric BMI in the model.")
   # Validate all current inputs before generating any scenarios.
   predict_model(m, marker_vals, cov_vals)
-  do.call(rbind, lapply(m$cov_levels[[vars$sex]], function(level) {
+  do.call(rbind, lapply(c(as.numeric(cov_vals[[vars$bmi]]), as.numeric(cov_vals[[vars$bmi]]) + 5), function(level) {
     risk <- vapply(ages, function(age) {
       scenario <- cov_vals
       scenario[[vars$age]] <- age
-      scenario[[vars$sex]] <- level
+      scenario[[vars$bmi]] <- level
       predict_model(m, marker_vals, scenario)$p
     }, numeric(1))
-    data.frame(age = ages, sex = level, risk = risk, stringsAsFactors = FALSE)
+    data.frame(age = ages, bmi = level, risk = risk, stringsAsFactors = FALSE)
   }))
 }
 
-draw_age_sex_curves <- function(curves, selected_age, selected_sex, threshold, labels = NULL) {
-  levels <- unique(curves$sex)
-  if (is.null(labels)) labels <- paste("Sex code", levels)
+draw_age_bmi_curves <- function(curves, selected_age, selected_bmi, threshold, labels = NULL) {
+  levels <- unique(curves$bmi)
+  if (is.null(labels)) labels <- paste("BMI", levels)
   colors <- rep(c("#0072B2", "#D55E00", "#009E73", "#CC79A7"), length.out = length(levels))
   old <- par(mar = c(4.5, 4.5, 2, 1)); on.exit(par(old))
   plot(range(curves$age), c(0, 100), type = "n", xlab = "Age (years)",
@@ -959,10 +947,10 @@ draw_age_sex_curves <- function(curves, selected_age, selected_sex, threshold, l
   abline(h = 100 * threshold, col = "#666666", lty = 3)
   abline(v = selected_age, col = "#555555", lty = 3)
   for (i in seq_along(levels)) {
-    d <- curves[curves$sex == levels[i], ]
+    d <- curves[curves$bmi == levels[i], ]
     lines(d$age, 100 * d$risk, col = colors[i], lwd = 2.5, lty = i)
     p <- d$risk[which.min(abs(d$age - selected_age))]
-    points(selected_age, 100 * p, col = colors[i], pch = if (levels[i] == selected_sex) 19 else 1, cex = 1.4, lwd = 2)
+    points(selected_age, 100 * p, col = colors[i], pch = if (as.character(levels[i]) == as.character(selected_bmi)) 19 else 1, cex = 1.4, lwd = 2)
   }
   legend("topleft", legend = labels, col = colors, lty = seq_along(levels),
          lwd = 2.5, bg = "white", cex = 0.9)
@@ -1191,8 +1179,8 @@ start_tab <- tabPanel(
       actionButton("go_analysis", "Go to Train Your Own Data", class = "btn-accent"))),
     column(6, div(class = "card",
       h3("Calculate a patient's risk"),
-      p(class = "lead-muted", "Enter six absolute raw concentration values with age and sex to estimate the",
-        "risk of high DMFT (DMFT > 13) with the published model, or use a model you trained."),
+      p(class = "lead-muted", "Load the revised model, then enter raw biomarker values with age and BMI to estimate the",
+        "risk of high DMFT (DMFT > 13) with the selected model, or use a model you trained."),
       actionButton("go_predict", "Go to Risk Calculator", class = "btn-accent")))
   ),
   fluidRow(column(12, p(class = "footer-note",
@@ -1244,8 +1232,7 @@ analysis_tab <- tabPanel(
       selectizeInput("covariates", "Adjustment covariates (optional)", choices = NULL, multiple = TRUE),
       div(class = "step-title", "5. Options"),
       fluidRow(column(6, numericInput("max_size", "Largest panel size", value = 3, min = 1, max = 6, step = 1)),
-               column(6, selectInput("search_mode", "Search", choices = c("Auto" = "auto", "Exhaustive" = "exhaustive",
-                                                                          "Beam" = "beam")))),
+               column(6, selectInput("search_mode", "Search", choices = c("Beam from 3 (exhaustive 1–2)" = "beam", "Auto" = "auto", "Exhaustive" = "exhaustive")))),
       fluidRow(column(6, numericInput("beam", "Panels kept per size", value = 50, min = 5, max = 500, step = 5)),
                column(6, numericInput("exh_limit", "Exhaustive up to (panels)", value = 20000, min = 100, step = 1000))),
       fluidRow(column(4, numericInput("folds", "CV folds", value = 5, min = 2, max = 10, step = 1)),
@@ -1283,6 +1270,8 @@ predict_tab <- tabPanel(
                              "Load a saved model" = "loaded")),
     conditionalPanel("input.model_choice == 'loaded'",
       fileInput("model_file", "Saved model file (.csv from \"Download model\")", accept = ".csv")),
+    conditionalPanel("input.model_choice == 'published'",
+      fileInput("selected_model_file", "Age/BMI model export from the rerun (.csv)", accept=".csv")),
     uiOutput("model_header"))),
   fluidRow(
     column(5, div(class = "card",
@@ -1303,7 +1292,7 @@ predict_tab <- tabPanel(
         uiOutput("hero_ui")),
       div(class = "card", h4("What the risk estimate represents"), uiOutput("represents_ui")))
   ),
-  fluidRow(column(12, uiOutput("age_sex_card"))),
+  fluidRow(column(12, uiOutput("age_bmi_card"))),
   fluidRow(column(12, div(class = "card",
     h4("How risk is calculated"),
     uiOutput("equation_ui"),
@@ -1321,7 +1310,7 @@ ui <- tagList(
 # 11) SERVER
 # ==========================================================================
 
-PUB <- list(model = PUBLISHED_MODEL, msg = NULL)  # Browser version: the bundled coefficients are used
+PUB <- list(model = PUBLISHED_MODEL, msg = NULL)  # Browser version: load the new model CSV in Patient prediction
 
 server <- function(input, output, session) {
 
@@ -1360,7 +1349,7 @@ server <- function(input, output, session) {
     comp <- grep("^(decayed|missing|filled|missing_teeth|restored_teeth|teeth_wcarries)$", nm, ignore.case = TRUE, value = TRUE)
     sel <- if (length(dm)) dm[1] else if (length(comp) == 3) comp else character(0)
     updateSelectizeInput(session, "outcome_cols", choices = nm, selected = sel)
-    cov_guess <- c(intersect(c("Age_DOS", "Age"), nm)[1], intersect("Sex", nm))
+    cov_guess <- c(intersect(c("Age_DOS", "Age"), nm)[1], intersect("BMI", nm))
     cov_guess <- cov_guess[!is.na(cov_guess)]
     updateSelectizeInput(session, "covariates", choices = nm, selected = cov_guess)
   })
@@ -1451,7 +1440,7 @@ server <- function(input, output, session) {
     nref <- if (is.null(gg)) NA else sum(gg$y == 0, na.rm = TRUE); ncase <- if (is.null(gg)) NA else sum(gg$y == 1, na.rm = TRUE)
     p <- length(selected_markers()); K <- min(s$max_size, p)
     lv <- vapply(seq_len(max(K, 1)), function(k) {
-      if (k == 1) return(sprintf("k = 1: exhaustive | %s candidate models", fmt_int(p)))
+      if (k <= 2) return(sprintf("k = %d: exhaustive | %s candidate models", k, fmt_int(choose(p,k))))
       n_all <- choose(p, k)
       exh <- s$search_mode == "exhaustive" || (s$search_mode == "auto" && n_all <= s$exhaustive_limit)
       if (exh && n_all <= HARD_EXHAUSTIVE_MAX) sprintf("k = %d: exhaustive | %s candidate models", k, fmt_int(n_all))
@@ -1668,6 +1657,13 @@ server <- function(input, output, session) {
     if (inherits(m, "error")) { showNotification(conditionMessage(m), type = "error", duration = 8); return() }
     rv$loaded <- m
   })
+  observeEvent(input$selected_model_file, {
+    req(input$selected_model_file)
+    m <- tryCatch(selected_age_bmi_model(utils::read.csv(input$selected_model_file$datapath,
+                        stringsAsFactors=FALSE),input$selected_model_file$name), error=function(e)e)
+    if (inherits(m,"error")) {showNotification(conditionMessage(m),type="error",duration=10);return()}
+    rv$published <- m
+  })
   current_model <- reactive(switch(input$model_choice %||% "published", published = rv$published,
                                    trained = rv$trained, loaded = rv$loaded))
   observeEvent(current_model(), rv$last_pred <- NULL, ignoreNULL = FALSE)
@@ -1681,8 +1677,8 @@ server <- function(input, output, session) {
       p(class = "lead-muted", HTML(paste0("<b>", htmltools::htmlEscape(m$name), "</b>. ", md_html(m$description %||% "")))),
       if (identical(m$source, "published") && !is.null(pub$msg)) div(class = if (model_ready(m)) "okmsg" else "notice", pub$msg),
       if (!model_ready(m)) div(class = "notice", HTML(paste(
-        "The selected model needs its complete coefficient export before it can calculate risk.",
-        "Choose <b>Load a saved model</b> and upload <code>dmft_selected_model.csv</code>, generated by Figures_DMFT.V3.R.",
+        "The age/BMI model must be rerun and its complete coefficient export loaded before calculating risk.",
+        "Use the <b>Age/BMI model export</b> input above to upload <code>dmft_age_bmi_model.csv</code>, generated by 03_Figures_DMFT_Age_BMI.R.",
         "For desktop use, you can also place that file next to app.R and restart."))))
   })
 
@@ -1718,9 +1714,7 @@ server <- function(input, output, session) {
   output$fill_btn <- renderUI({
     m <- current_model()
     if (is.null(m) || !model_ready(m)) return(NULL)
-    if (identical(m$source, "published"))
-      return(actionButton("example", "Fill example values", class = "btn-soft",
-                          title = "Illustrative values, not from a real participant"))
+    
     if (!is.null(m$markers$raw_median))
       actionButton("fill", "Fill with training-data medians", class = "btn-soft")
   })
@@ -1730,7 +1724,7 @@ server <- function(input, output, session) {
     for (i in seq_along(unique(m$covariates$var))) {
       v <- unique(m$covariates$var)[i]
       if (is_age_variable(v)) updateSliderInput(session, paste0("cv_", i), value = 40)
-      if (v == "Sex") updateSelectInput(session, paste0("cv_", i), selected = m$cov_levels$Sex[1])
+      if (v == "BMI") updateNumericInput(session, paste0("cv_", i), value = 25)
     }
     rv$last_pred <- NULL
     showNotification("Illustrative values filled in (not a real participant). Click Calculate risk.",
@@ -1794,34 +1788,34 @@ server <- function(input, output, session) {
     if (!is.null(isolate(rv$last_pred))) rv$last_pred <- live_prediction()
   }, ignoreNULL = FALSE)
 
-  output$age_sex_card <- renderUI({
+  output$age_bmi_card <- renderUI({
     m <- current_model()
-    if (is.null(age_sex_variables(m))) return(NULL)
-    div(class = "card", h4("Compare risk across age and sex"),
-        p(class = "help-note", "Move the age slider above to compare both sex categories at that age. Curves update automatically using the current biomarker values; all other inputs stay fixed. The filled point marks the selected sex."),
-        plotOutput("age_sex_plot", height = "360px"),
-        uiOutput("age_sex_values"),
+    if (is.null(age_bmi_variables(m))) return(NULL)
+    div(class = "card", h4("Compare risk across age and BMI"),
+        p(class = "help-note", "Move the age slider or change BMI above. The two curves compare the entered BMI with BMI five units higher, holding biomarker values fixed. The filled point marks the entered age and BMI."),
+        plotOutput("age_bmi_plot", height = "360px"),
+        uiOutput("age_bmi_values"),
         p(class = "help-note", "These curves show model scenarios, not changes observed over time or the effect of aging. The displayed age range is for exploration and is not a validated prediction range."))
   })
   comparison_curves <- reactive({
-    d <- comparison_inputs(); vars <- age_sex_variables(d$model); req(vars)
+    d <- comparison_inputs(); vars <- age_bmi_variables(d$model); req(vars)
     validate(need(model_ready(d$model), "Load complete model coefficients to show the comparison."),
              need(!is.null(live_prediction()), "Enter all biomarker values and participant characteristics to show the comparison."))
     age <- as.numeric(d$covariates[[vars$age]])
     limits <- age_slider_limits(d$model, vars$age)
-    curves <- age_sex_curve_data(d$model, d$markers, d$covariates,
+    curves <- age_bmi_curve_data(d$model, d$markers, d$covariates,
                                 sort(unique(c(seq(limits[1], limits[2], by = 1), age))))
-    list(curves = curves, age = age, sex = as.character(d$covariates[[vars$sex]]), threshold = d$model$threshold,
-         labels = level_label(d$model, vars$sex, unique(curves$sex)), model = d$model, sex_var = vars$sex)
+    list(curves = curves, age = age, bmi = as.character(d$covariates[[vars$bmi]]), threshold = d$model$threshold,
+         labels = paste("BMI", unique(curves$bmi)), model = d$model, bmi_var = vars$bmi)
   })
-  output$age_sex_plot <- renderPlot({
+  output$age_bmi_plot <- renderPlot({
     d <- comparison_curves()
-    draw_age_sex_curves(d$curves, d$age, d$sex, d$threshold, d$labels)
+    draw_age_bmi_curves(d$curves, d$age, d$bmi, d$threshold, d$labels)
   }, res = 110)
-  output$age_sex_values <- renderUI({
+  output$age_bmi_values <- renderUI({
     d <- comparison_curves()
     rows <- d$curves[d$curves$age == d$age, ]
-    p(sprintf("At age %s: %s.", d$age, paste(sprintf("%s %.2f%%", tolower(level_label(d$model, d$sex_var, rows$sex)),
+    p(sprintf("At age %s: %s.", d$age, paste(sprintf("%s %.2f%%", paste("BMI", rows$bmi),
                                                      100 * rows$risk), collapse = "; ")))
   })
 
@@ -1830,6 +1824,7 @@ server <- function(input, output, session) {
   })
   output$gauge <- renderPlot({
     m <- current_model(); pr <- rv$last_pred
+    req(m, model_ready(m))
     draw_gauge(if (is.null(pr)) NA else pr$p, if (is.null(m)) NA else m$threshold,
                lo_lab = "Lower", hi_lab = "Higher")
   }, res = 110)
@@ -1862,7 +1857,7 @@ server <- function(input, output, session) {
         "and the risk estimate is not a diagnosis."))
   })
   output$equation_ui <- renderUI({
-    m <- current_model(); req(m)
+    m <- current_model(); req(m, model_ready(m))
     tagList(p("The model is a logistic regression. Its linear predictor, with the fitted coefficients, is"),
             equation_html(m),
             p(class = "help-note", "Coefficients are shown to four significant digits; the calculation uses the full values."))
@@ -1896,4 +1891,5 @@ server <- function(input, output, session) {
 }
 
 if (!isTRUE(getOption("dmft.app.test"))) shinyApp(ui, server)
+
 

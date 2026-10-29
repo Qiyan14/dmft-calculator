@@ -1,19 +1,19 @@
 # ==========================================================================
 # CALIBRATION OF THE DMFT PANELS (TRIPOD+AI items 12e and 23a)
 # ==========================================================================
-# Run after Figures_DMFT.V3.R in the same R session:
+# Run after 03_Figures_DMFT_Age_BMI.R in the same R session:
 #
-#   source("Script1_Preprocessing_DMFT_Four_Models.R")   # PROJECT = "DMFT"
-#   source("Figures_DMFT.V3.R")
+#   source("01_Preprocessing_DMFT_Age_BMI.R")   # PROJECT = "DMFT"
+#   source("03_Figures_DMFT_Age_BMI.R")
 #   source("Calibration_DMFT.R")                          # this file
 #
-# It uses the refits Figures_DMFT.V3.R leaves in the session (FIG_REFITS,
+# It uses the refits 03_Figures_DMFT_Age_BMI.R leaves in the session (FIG_REFITS,
 # FIG_BEST, FILE_TAG, draw_roc). Run on its own, it reads the
-# OOF_predictions_k<k>_<tag>.csv files that Figures_DMFT.V3.R writes, from the
+# OOF_predictions_k<k>_<tag>.csv files that 03_Figures_DMFT_Age_BMI.R writes, from the
 # working directory. Only base R is needed (readxl for the baseline workbook).
 #
-# For the best panel at each size, and for the age + sex baseline when its
-# workbook (Results_LogReg_HD_vs_LD_Age_Sex_Only_<key>.xlsx, sheet
+# For the best panel at each size, and for the age + BMI baseline when its
+# workbook (Results_LogReg_HD_vs_LD_Age_BMI_Only_<key>.xlsx, sheet
 # CV_Predictions) is in the working directory, from the pooled out-of-fold
 # predictions of all repeats:
 #   Calibration intercept  logistic regression of HD on an intercept with
@@ -78,10 +78,12 @@ if (!dir.exists(OUT_DIR)) dir.create(OUT_DIR, recursive = TRUE)
   if (length(unique(d$y)) != 2) stop("The out-of-fold predictions need both outcome groups.")
   d
 }
-.cal_name <- function(k) if (k == 0) "Age + sex only" else sprintf("%d biomarker%s + age + sex", k, if (k == 1) "" else "s")
+.cal_name <- function(k) if (k == 0) "Age + BMI only" else sprintf("%d biomarker%s + age + BMI", k, if (k == 1) "" else "s")
 
 CAL_MODELS <- list()
 if (exists("FIG_REFITS") && length(FIG_REFITS)) {
+  if (!exists("FILE_TAG") || !grepl("^Biomarkers_Age_BMI_.*_exhaustive12_beam3$", FILE_TAG))
+    stop("Run the revised age/BMI figure script before calibration.")
   for (kk in names(FIG_REFITS)) {
     r <- FIG_REFITS[[kk]]
     CAL_MODELS[[kk]] <- list(k = as.integer(kk), label = .cal_name(as.integer(kk)),
@@ -91,9 +93,10 @@ if (exists("FIG_REFITS") && length(FIG_REFITS)) {
   CAL_TAG <- if (exists("FILE_TAG")) FILE_TAG else "DMFT"
 } else {
   .files <- list.files(OUT_DIR, pattern = "^OOF_predictions_k([0-9]+)_(.+)\\.csv$")
+  .files <- .files[grepl("_Biomarkers_Age_BMI_.*_exhaustive12_beam3\\.csv$", .files)]
   if (!length(.files))
     stop("No refits in this session and no OOF_predictions_k<k>_<tag>.csv files in ", OUT_DIR,
-         ". Run Figures_DMFT.V3.R first.", call. = FALSE)
+         ". Run 03_Figures_DMFT_Age_BMI.R first.", call. = FALSE)
   .tags <- unique(sub("^OOF_predictions_k[0-9]+_(.+)\\.csv$", "\\1", .files))
   if (length(.tags) > 1)
     stop("Out-of-fold prediction files from more than one run: ", paste(.tags, collapse = ", "),
@@ -106,21 +109,6 @@ if (exists("FIG_REFITS") && length(FIG_REFITS)) {
                              data = .cal_frame(d$rowIndex, d$Resample, d$obs, d$p), threshold = NA_real_)
   }
   CAL_MODELS <- CAL_MODELS[order(as.integer(names(CAL_MODELS)))]
-}
-
-# Age + sex baseline from its workbook, if present
-.base_file <- list.files(OUT_DIR, pattern = "^Results_LogReg_HD_vs_LD_Age_Sex_Only_.*\\.xlsx$", full.names = TRUE)
-if (length(.base_file) == 1 && requireNamespace("readxl", quietly = TRUE)) {
-  .bp <- tryCatch(as.data.frame(readxl::read_excel(.base_file, sheet = "CV_Predictions")), error = function(e) NULL)
-  if (!is.null(.bp) && all(c("rowIndex", "Resample", "obs", .cal_case) %in% names(.bp))) {
-    .bt <- tryCatch(as.data.frame(readxl::read_excel(.base_file, sheet = "Results_0_Biomarkers")), error = function(e) NULL)
-    CAL_MODELS <- c(list(`0` = list(k = 0L, label = .cal_name(0),
-                                    data = .cal_frame(.bp$rowIndex, .bp$Resample, .bp$obs, .bp[[.cal_case]]),
-                                    threshold = if (!is.null(.bt)) as.numeric(.bt$Threshold[1]) else NA_real_)),
-                    CAL_MODELS)
-  }
-} else if (length(.base_file) > 1) {
-  message("Several age + sex baseline workbooks found; the baseline is left out.")
 }
 
 .n_ids <- vapply(CAL_MODELS, function(m) length(unique(m$data$id)), integer(1))
@@ -370,7 +358,7 @@ if (exists("draw_roc") && is.function(draw_roc) && exists("FIG_REFITS")) {
 .base <- CAL_RESULTS[CAL_RESULTS$Panel_size == 0, ]
 .base_txt <- if (nrow(.base)) {
   b <- function(m) .base$Estimate[.base$Metric == m]
-  sprintf(" For comparison, the age-and-sex baseline had a calibration intercept of %s, slope of %s, and Brier score of %s (AUC %s).",
+  sprintf(" For comparison, the age-and-BMI baseline had a calibration intercept of %s, slope of %s, and Brier score of %s (AUC %s).",
           .f2(b("Calibration_intercept")), .f2(b("Calibration_slope")), .f3(b("Brier")), .f3(b("AUC")))
 } else ""
 
@@ -407,3 +395,4 @@ if (exists("draw_roc") && is.function(draw_roc) && exists("FIG_REFITS")) {
 writeLines(.text, file.path(OUT_DIR, sprintf("Calibration_text_%s.txt", CAL_TAG)), useBytes = TRUE)
 cat("\n", paste(.text, collapse = "\n"), "\n", sep = "")
 cat(sprintf("\nSaved: Calibration_metrics_%s.csv and Calibration_text_%s.txt\n", CAL_TAG, CAL_TAG))
+

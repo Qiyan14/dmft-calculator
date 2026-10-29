@@ -11,7 +11,7 @@
     <script type="module">
       import { runApp } from "./shinylive/shinylive.js";
       // Version the application bundle so returning visitors receive the current model and UI.
-      const response = await fetch("./app.json?v=33f094a", { cache: "no-store" });
+      const response = await fetch("./app.json?v=0f2549f", { cache: "no-store" });
       if (!response.ok) throw new Error("Could not load calculator: " + response.status);
       const appFiles = await response.json();
       const requestedMode = new URLSearchParams(location.search).get("_shinylive-mode");
@@ -61,3 +61,4 @@
 </script>
   </body>
 </html>
+

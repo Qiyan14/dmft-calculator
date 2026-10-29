@@ -4,8 +4,8 @@
 # Run after Script 1 (PROJECT = "DMFT") in the same session, with the
 # LogReg_Fast workbook of that run in the working directory:
 #
-#   source("script1_preprocessing.R")   # PROJECT = "DMFT"
-#   source("Figures_DMFT.R")            # this file; runs at the bottom
+#   source("01_Preprocessing_DMFT_Age_BMI.R")   # PROJECT = "DMFT"
+#   source("03_Figures_DMFT_Age_BMI.R")            # this file; runs at the bottom
 #
 # 1. ROC curves of the best panel at each size (1 to 6 markers) from the
 #    pooled out-of-fold predictions of all repeats. The panels are refitted
@@ -31,7 +31,7 @@
 # 1) SETTINGS
 # ==========================================================================
 
-RESULTS_FILE <- NULL           # NULL: automatically compare the three biomarker scenario workbooks for this registry key
+RESULTS_FILE <- NULL           # NULL: use the new age/BMI workbook for this registry key
 OUT_DIR      <- getwd()        # where figures and tables are written
 FIG_FORMATS  <- c("png", "pdf")   # any of "png", "pdf", "tiff"
 PNG_DPI      <- 300
@@ -91,29 +91,8 @@ if (!exists("PROJECT") || !exists("registry_key") || !exists("data.dfPH")) {
   .grp <- sort(unique(as.character(data.dfPH$condL)))
   if (!identical(.grp, c("HD", "LD")))
     .msgs <- c(.msgs, sprintf("condL in data.dfPH should be LD and HD; found: %s.", paste(.grp, collapse = ", ")))
-  .scenario_names <- c("Biomarkers_Only", "Biomarkers_Age_Sex", "Biomarkers_Age_Sex_BMI")
-  .scenario_files <- sprintf("Results_LogReg_HD_vs_LD_%s_%s.xlsx", .scenario_names, registry_key)
-  .scenario_best <- list()
-  if (is.null(RESULTS_FILE)) {
-    if (!all(file.exists(.scenario_files)))
-      stop("Put all three biomarker scenario workbooks in the working directory, or set RESULTS_FILE explicitly.")
-    for (ff in .scenario_files) {
-      for (sh in grep("^Results_[0-9]+_Biomarkers$", readxl::excel_sheets(ff), value = TRUE)) {
-        dd <- as.data.frame(readxl::read_excel(ff, sheet = sh))
-        dd <- dd[order(-dd$Balanced_Accuracy, -dd$AUC, na.last = TRUE), , drop = FALSE]
-        if (nrow(dd)) .scenario_best[[length(.scenario_best) + 1L]] <- data.frame(
-          file = ff, k = as.integer(gsub("[^0-9]", "", sh)),
-          BA = dd$Balanced_Accuracy[1], AUC = dd$AUC[1])
-      }
-    }
-    .comparison <- do.call(rbind, .scenario_best)
-    .comparison <- .comparison[order(-.comparison$BA, -.comparison$AUC), ]
-    .res_file <- .comparison$file[1]
-    .winners <- .comparison[!duplicated(.comparison$k), ]
-    if (any(.winners$file != .res_file))
-      stop("Different configurations win at different panel sizes. Set RESULTS_FILE for each configuration and run separately.")
-    message("Best configuration across all panel sizes: ", basename(.res_file))
-  } else .res_file <- RESULTS_FILE
+  .res_file <- if (is.null(RESULTS_FILE))
+    sprintf("Results_LogReg_HD_vs_LD_Biomarkers_Age_BMI_%s.xlsx", registry_key) else RESULTS_FILE
   if (!file.exists(.res_file))
     .msgs <- c(.msgs, sprintf("Results workbook not found: %s\n  Put it in the working directory (%s) or set RESULTS_FILE.",
                               .res_file, getwd()))
@@ -172,6 +151,11 @@ BEST_OVERALL_K <- .ks[order(-.ba, -.auc)[1]]
 # throwaway caret::train() after set.seed(seed): caret draws a private seed
 # before building its resamples, so createMultiFolds() would not match.
 
+if (!identical(.pget("Model configuration"), "Biomarkers_Age_BMI") ||
+    !setequal(.wb_conf, c("Age_DOS", "BMI")) ||
+    !grepl("_exhaustive12_beam3$", registry_key) ||
+    !identical(.pget("k = 2 search"), "exhaustive"))
+  stop("Use the rerun age/BMI workbook with exhaustive two-marker search.")
 .conf <- .wb_conf  # model covariates come from the selected workbook, not Script 1
 .stopm <- character(0)
 if (!identical(.pget("Script 1 registry key"), registry_key))
@@ -179,20 +163,16 @@ if (!identical(.pget("Script 1 registry key"), registry_key))
                               registry_key, .pget("Script 1 registry key")))
 
 FIG_DAT <- as.data.frame(data.dfPH)
-# Match the common cohort used for ALL four models, even when BMI is not a predictor.
-.required <- c("Age_DOS", "Sex", "BMI")
-if (length(setdiff(.required, names(FIG_DAT)))) stop("Missing common-cohort columns: Age_DOS, Sex, BMI.")
-.sx <- trimws(as.character(FIG_DAT$Sex)); .sx[is.na(FIG_DAT$Sex) | .sx == ""] <- NA_character_
-FIG_DAT$Sex <- factor(.sx)
+# Match the age/BMI analysis cohort.
+.required <- c("Age_DOS", "BMI")
+if (length(setdiff(.required, names(FIG_DAT)))) stop("Missing model columns: Age_DOS, BMI.")
 .ok <- complete.cases(FIG_DAT[, .required, drop = FALSE]) & !is.na(FIG_DAT$condL)
 .source_rows <- which(.ok)
 FIG_DAT <- droplevels(FIG_DAT[.ok, , drop = FALSE])
-if (nlevels(FIG_DAT$Sex) != 2L) stop("Expected two observed Sex levels.")
 # Use the exact saved folds when available; otherwise reproduce caret's seed procedure.
-.fold_file <- sprintf("DMFT_Four_Models_Resampling_%s.rds", registry_key)
+.fold_file <- sprintf("DMFT_Age_BMI_Resampling_%s.rds", registry_key)
 .saved_folds <- if (file.exists(.fold_file)) readRDS(.fold_file) else NULL
 if (!is.null(.saved_folds) && (!identical(.saved_folds$source_rows, .source_rows) ||
-    !identical(.saved_folds$sex_levels, levels(FIG_DAT$Sex)) ||
     !identical(.saved_folds$registry_key, registry_key) ||
     !identical(as.character(.saved_folds$outcome), as.character(FIG_DAT$condL))))
   stop("Saved resampling cohort/coding does not match this preprocessing session.")
@@ -244,7 +224,7 @@ if (length(.stopm))
 
 # Refit one panel through caret on the fixed folds. Results are cached in the
 # session (dmft_fig_cache), so re-running the script to restyle a figure is quick.
-.cache <- list() # fresh cache prevents reuse across datasets or sex coding changes
+.cache <- list() # fresh cache prevents reuse across datasets or adjustment changes
 .refit <- function(markers) {
   preds <- c(markers, .conf)
   key <- paste(registry_key, nrow(FIG_DAT), FIG_CV_FOLDS, FIG_CV_REPEATS, FIG_CV_SEED, paste(preds, collapse = "+"),
@@ -800,15 +780,15 @@ if (max(abs(drop(.xx %*% .raw) - predict(.fm, type = "link"))) > 1e-8)
   stop("Raw-input equation verification failed.")
 FIG_COEFS <- data.frame(Term = names(.raw), Label = names(.raw),
   Coefficient_raw_input = unname(.raw), Input = unname(.input[names(.raw)]), stringsAsFactors = FALSE)
-.meta <- data.frame(Term = c("(Threshold)", "(Delta)", "(Case group)", "(Reference group)", names(.refs)),
-  Label = c("Classification threshold", "log2 offset", "high DMFT (DMFT > 13)", "low DMFT (DMFT <= 13)", unname(.refs)),
-  Coefficient_raw_input = c(FIG_BEST[[as.character(BEST_OVERALL_K)]]$row$Threshold, 5e-7, NA, NA, rep(NA, length(.refs))),
+.meta <- data.frame(Term = c("(Threshold)", "(Delta)", "(Case group)", "(Reference group)", names(.refs), "(Model configuration)", "(Search design)"),
+  Label = c("Classification threshold", "log2 offset", "high DMFT (DMFT > 13)", "low DMFT (DMFT <= 13)", unname(.refs), "Biomarkers_Age_BMI", "exhaustive12_beam3"),
+  Coefficient_raw_input = c(FIG_BEST[[as.character(BEST_OVERALL_K)]]$row$Threshold, 5e-7, NA, NA, rep(NA, length(.refs) + 2L)),
   Input = "", stringsAsFactors = FALSE)
 FIG_COEFS <- rbind(FIG_COEFS, .meta)
 write_table(FIG_COEFS, paste0("Model_coefficients_best_panel_", FILE_TAG))
-write_table(FIG_COEFS, "dmft_selected_model")
+write_table(FIG_COEFS, "dmft_age_bmi_model")
 for (kk in names(FIG_REFITS)) write_table(FIG_REFITS[[kk]]$pred, paste0("OOF_predictions_k", kk, "_", FILE_TAG))
-message("Load dmft_selected_model.csv in the Shiny app, or place it next to app.R and restart.")
+message("Load dmft_age_bmi_model.csv in the Shiny app, or place it next to app.R and restart.")
 
 if (MAKE_PERFORMANCE) {
   .perf <- do.call(rbind, lapply(FIG_BEST, function(x) data.frame(
