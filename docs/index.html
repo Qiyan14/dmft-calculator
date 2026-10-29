@@ -9,12 +9,14 @@
       type="module"
     ></script>
     <script type="module">
-      import { runExportedApp } from "./shinylive/shinylive.js";
-      runExportedApp({
-        id: "root",
-        appEngine: "r",
-        relPath: "",
-      });
+      import { runApp } from "./shinylive/shinylive.js";
+      // Version the application bundle so returning visitors receive the current model and UI.
+      const response = await fetch("./app.json?v=fc4a9f7", { cache: "no-store" });
+      if (!response.ok) throw new Error("Could not load calculator: " + response.status);
+      const appFiles = await response.json();
+      const requestedMode = new URLSearchParams(location.search).get("_shinylive-mode");
+      const mode = ["viewer", "editor", "editor-terminal"].includes(requestedMode) ? requestedMode : "viewer";
+      runApp(document.getElementById("root"), mode, { startFiles: appFiles }, "r");
     </script>
     <link rel="stylesheet" href="./shinylive/style-resets.css" />
     <link rel="stylesheet" href="./shinylive/shinylive.css" />
