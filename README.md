@@ -4,7 +4,7 @@
 
 The selected panel now comprises six salivary biomarkers plus **age and sex**. It was the highest-performing retained panel across the four evaluated configurations (age + sex alone; biomarkers + age + sex; biomarkers + age + sex + BMI; biomarkers alone).
 
-**Model status:** the uploaded results contain performance metrics and biomarker odds ratios, but not the complete fitted intercept, age coefficient, sex coefficient or reference coding. The old model's coefficients have therefore been removed. The selected model cannot calculate risk until its complete export is supplied. Training on uploaded data and loading complete saved models remain available.
+**Model status:** the complete fitted coefficients are bundled for the selected six-biomarker age-and-sex model. Sex code 1 is the reference and code 2 adds 0.11282243181054701 to the linear predictor. Source category meanings are not inferred. Training on uploaded data and loading complete saved models remain available.
 
 ## Selected panel and results
 
@@ -29,7 +29,9 @@ The figure script requires the original preprocessed participant data in the R s
 
 ## Risk Calculator
 
-On the website, choose **Load a saved model** and upload `dmft_selected_model.csv`. For desktop use, put the CSV next to `app.R` and restart to load the selected model automatically. To bundle it for all website visitors, place the verified CSV in `app/`, rebuild the site and publish it.
+Choose **Selected DMFT model**, enter the six raw biomarker measurements, choose a sex code and use the **Age (years)** slider. Click **Calculate risk** to display the gauge and calculation. The comparison graph overlays risk curves for both sex codes, holds biomarkers fixed and marks the selected age. It updates automatically as inputs change; after a calculation, the gauge and equation update too. The adult slider spans 18–100 years for scenario exploration, not a validated prediction range.
+
+You can also choose **Load a saved model** to upload a complete model CSV. The age/sex graph is shown only when the model contains numeric age and categorical sex.
 
 Enter biomarker measurements in the original absolute assay units, age in years, and sex using the categories recorded in the model export. Do not transform or standardize the values yourself. The app applies log2(raw + 5e-7); LD reference centering and scaling are absorbed into the exported coefficients. The equation is:
 
@@ -39,7 +41,7 @@ eta = intercept + sum_j beta_j * log2(raw_j + 5e-7)
 p(HD) = 1 / (1 + exp(-eta))
 ```
 
-Classification is HD when the estimated risk is at least the saved model's threshold. Numeric coefficients will be available after the complete export is generated; they are not inferred from the previous model.
+Classification is HD when the estimated risk is at least the saved model's threshold. Calculations use the full-precision coefficients supplied from the final selected-model fit.
 
 ## Train Your Own Data
 
