@@ -4,7 +4,7 @@
 
 The selected panel now comprises six salivary biomarkers plus **age and sex**. It was the highest-performing retained panel across the four evaluated configurations (age + sex alone; biomarkers + age + sex; biomarkers + age + sex + BMI; biomarkers alone).
 
-**Model status:** the uploaded results contain performance metrics and biomarker odds ratios, but not the complete fitted intercept, age coefficient, sex coefficient or reference coding. The old model's coefficients have therefore been removed. The selected model cannot calculate probabilities until its complete export is supplied. Training on uploaded data and loading complete saved models remain available.
+**Model status:** the uploaded results contain performance metrics and biomarker odds ratios, but not the complete fitted intercept, age coefficient, sex coefficient or reference coding. The old model's coefficients have therefore been removed. The selected model cannot calculate risk until its complete export is supplied. Training on uploaded data and loading complete saved models remain available.
 
 ## Selected panel and results
 
@@ -39,7 +39,7 @@ eta = intercept + sum_j beta_j * log2(raw_j + 5e-7)
 p(HD) = 1 / (1 + exp(-eta))
 ```
 
-Classification is HD when the calculated probability is at least the saved model's threshold. Numeric coefficients will be available after the complete export is generated; they are not inferred from the previous model.
+Classification is HD when the estimated risk is at least the saved model's threshold. Numeric coefficients will be available after the complete export is generated; they are not inferred from the previous model.
 
 ## Train Your Own Data
 
