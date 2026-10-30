@@ -8,11 +8,12 @@ load_functions <- function(path) {
  for(ex in parse(path)) if(is.call(ex) && identical(ex[[1]],as.name('<-'))) {
   nm <- as.character(ex[[2]])
   if ((is.call(ex[[3]]) && identical(ex[[3]][[1]],as.name('function'))) ||
-      nm %in% c('PUBLISHED_MODEL','EXAMPLE','MINUS','HARD_EXHAUSTIVE_MAX')) eval(ex,e)
+      nm %in% c('PUBLISHED_MODEL','EXAMPLE','MINUS','HARD_EXHAUSTIVE_MAX','APP_VERSION')) eval(ex,e)
  }
  e
 }
 e <- load_functions(app_path)
+stopifnot(is.character(e$APP_VERSION), nzchar(e$APP_VERSION))
 stopifnot(!e$model_ready(e$PUBLISHED_MODEL))
 job <- list(p=472L,s=list(search_mode='beam',exhaustive_limit=10),parents=matrix(c(1L,2L),2))
 pairs <- e$level_candidates(job,2L)

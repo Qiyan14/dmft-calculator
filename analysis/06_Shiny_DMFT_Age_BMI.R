@@ -30,6 +30,8 @@
 # The previous age/sex model is intentionally not bundled. Load the new export.
 # ==========================================================================
 
+APP_VERSION <- "6.1 (age + BMI)"
+
 suppressPackageStartupMessages(library(shiny))
 HAS_READXL  <- requireNamespace("readxl", quietly = TRUE)
 HAS_WRITEXL <- requireNamespace("writexl", quietly = TRUE)
