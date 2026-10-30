@@ -31,7 +31,11 @@
 # 1) SETTINGS
 # ==========================================================================
 
-RESULTS_FILE <- NULL           # NULL: use the new age/BMI workbook for this registry key
+RESULTS_FILE <- "DMFT_Age_BMI_Summary_DMFT_cutoff13median_conf_AgeDOS_BMI_allBiomarkers_noRatios_noVif_exhaustive12_beam3.xlsx"
+# Resolve helper beside this script (Source in RStudio or source() with a full path).
+.dmft_source_dir <- tryCatch(dirname(normalizePath(sys.frame(1)$ofile)), error=function(e)getwd())
+source(file.path(.dmft_source_dir, "00_DMFT_Result_Reader.R"), local=TRUE)
+
 OUT_DIR      <- getwd()        # where figures and tables are written
 FIG_FORMATS  <- c("png", "pdf")   # any of "png", "pdf", "tiff"
 PNG_DPI      <- 300
@@ -40,6 +44,7 @@ MAKE_ROC     <- TRUE
 MAKE_PERFORMANCE <- TRUE  # manuscript Figure 1: balanced accuracy ranges and AUC
 MAKE_RADAR   <- TRUE
 MAKE_HEATMAP <- TRUE
+MAKE_VARIABLE_IMPORTANCE <- TRUE  # held-out permutation importance of the selected panel
 
 # ROC
 ROC_COVARIATES_ONLY <- FALSE   # intentionally omitted
@@ -107,19 +112,25 @@ if (!exists("confounders")) confounders <- NULL
 # 3) THE WORKBOOK
 # ==========================================================================
 
-.params <- as.data.frame(readxl::read_excel(.res_file, sheet = "Analysis_Parameters", col_types = "text"))
+.results <- dmft_read_results(.res_file)
+.params <- .results$parameters
 .pget <- function(name) {
   v <- .params$Value[which(trimws(.params$Parameter) == name)]   # which(): blank rows are NA
   if (length(v) && !is.na(v[1])) v[1] else NA_character_
 }
 
-.cv <- regmatches(.pget("Cross-validation"),
-                  regexec("([0-9]+)-fold CV x ([0-9]+) repeats, seed ([0-9]+)", .pget("Cross-validation")))[[1]]
-if (length(.cv) != 4)
-  stop("Could not read the cross-validation scheme from the workbook's Analysis_Parameters sheet.", call. = FALSE)
-FIG_CV_FOLDS   <- as.integer(.cv[2])
-FIG_CV_REPEATS <- as.integer(.cv[3])
-FIG_CV_SEED    <- as.integer(.cv[4])
+if (isTRUE(.results$summary)) {
+  .summary_fold_file <- file.path(dirname(.res_file), sprintf("DMFT_Age_BMI_Resampling_%s.rds", registry_key))
+  if (!file.exists(.summary_fold_file)) stop("The summary has no CV predictions/settings. Put the matching DMFT_Age_BMI_Resampling_<registry>.rds beside it, or use the detailed workbook.")
+  .summary_folds <- readRDS(.summary_fold_file)
+  .scheme <- dmft_saved_cv(.summary_folds, as.integer(.pget("Total n")))
+  FIG_CV_FOLDS <- .scheme$folds; FIG_CV_REPEATS <- .scheme$repeats
+  FIG_CV_SEED <- 123L # computational seed only; saved training indices define the actual CV
+} else {
+  .cv <- regmatches(.pget("Cross-validation"), regexec("([0-9]+)-fold CV x ([0-9]+) repeats, seed ([0-9]+)", .pget("Cross-validation")))[[1]]
+  if(length(.cv)!=4L)stop("Cannot read CV settings from Analysis_Parameters.")
+  FIG_CV_FOLDS<-as.integer(.cv[2]);FIG_CV_REPEATS<-as.integer(.cv[3]);FIG_CV_SEED<-as.integer(.cv[4])
+}
 
 .wb_conf <- .pget("Confounders")
 .wb_conf <- if (is.na(.wb_conf) || .wb_conf == "none") character(0) else trimws(strsplit(.wb_conf, ",")[[1]])
@@ -127,13 +138,13 @@ FIG_CV_SEED    <- as.integer(.cv[4])
 .case <- .pget("Case group (positive)")
 if (is.na(.ref) || is.na(.case)) { .ref <- "LD"; .case <- "HD" }
 
-.sheets <- grep("^Results_[0-9]+_Biomarkers$", readxl::excel_sheets(.res_file), value = TRUE)
+.sheets <- grep("^Results_[0-9]+_Biomarkers$", names(.results$tables), value = TRUE)
 .ks     <- sort(as.integer(sub("^Results_([0-9]+)_Biomarkers$", "\\1", .sheets)))
 if (!length(.ks)) stop("No Results_<k>_Biomarkers sheets in the workbook.", call. = FALSE)
 
 # best panel per size: the top row, sorted again by balanced accuracy then AUC
 FIG_BEST <- lapply(.ks, function(k) {
-  d <- as.data.frame(readxl::read_excel(.res_file, sheet = sprintf("Results_%d_Biomarkers", k)))
+  d <- .results$tables[[sprintf("Results_%d_Biomarkers", k)]]
   d <- d[order(-d$Balanced_Accuracy, -d$AUC, na.last = TRUE), , drop = FALSE]
   list(k = k, markers = as.character(unlist(d[1, paste0("Biomarker", seq_len(k))])), row = d[1, , drop = FALSE])
 })
@@ -170,7 +181,7 @@ if (length(setdiff(.required, names(FIG_DAT)))) stop("Missing model columns: Age
 .source_rows <- which(.ok)
 FIG_DAT <- droplevels(FIG_DAT[.ok, , drop = FALSE])
 # Use the exact saved folds when available; otherwise reproduce caret's seed procedure.
-.fold_file <- sprintf("DMFT_Age_BMI_Resampling_%s.rds", registry_key)
+.fold_file <- file.path(dirname(.res_file), sprintf("DMFT_Age_BMI_Resampling_%s.rds", registry_key))
 .saved_folds <- if (file.exists(.fold_file)) readRDS(.fold_file) else NULL
 if (!is.null(.saved_folds) && (!identical(.saved_folds$source_rows, .source_rows) ||
     !identical(.saved_folds$registry_key, registry_key) ||
@@ -483,6 +494,10 @@ if (length(.ks_refit)) {
       PPV_refit = FIG_REFIT_COV$youden$precision, NPV_refit = FIG_REFIT_COV$youden$npv, stringsAsFactors = FALSE))
   }
   write_table(FIG_CHECK, paste0("Refit_check_", FILE_TAG))
+  FIG_VERIFIED <- list(source_md5=unname(tools::md5sum(.res_file)), registry_key=registry_key,
+                       data=FIG_DAT, panels=FIG_BEST, check=FIG_CHECK,
+                       index=.cache[[".folds"]], best_k=BEST_OVERALL_K)
+  saveRDS(FIG_VERIFIED, file.path(OUT_DIR,paste0("Verified_refits_",FILE_TAG,".rds")))
 }
 
 
@@ -814,3 +829,5 @@ if (MAKE_PERFORMANCE) {
 cat("\n===== Files written =====\n")
 for (.f in .written) cat("  ", .f, "\n")
 cat("\nAll done.\n")
+
+if (MAKE_VARIABLE_IMPORTANCE) source(file.path(.dmft_source_dir, "08_Variable_Importance_DMFT_Age_BMI.R"), local=TRUE)

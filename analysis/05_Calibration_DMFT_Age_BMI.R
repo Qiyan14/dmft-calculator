@@ -10,12 +10,9 @@
 # It uses the refits 03_Figures_DMFT_Age_BMI.R leaves in the session (FIG_REFITS,
 # FIG_BEST, FILE_TAG, draw_roc). Run on its own, it reads the
 # OOF_predictions_k<k>_<tag>.csv files that 03_Figures_DMFT_Age_BMI.R writes, from the
-# working directory. Only base R is needed (readxl for the baseline workbook).
+# working directory. Requires readxl to validate against the supplied summary.
 #
-# For the best panel at each size, and for the age + BMI baseline when its
-# workbook (Results_LogReg_HD_vs_LD_Age_BMI_Only_<key>.xlsx, sheet
-# CV_Predictions) is in the working directory, from the pooled out-of-fold
-# predictions of all repeats:
+# For the best panel at each size, using pooled out-of-fold predictions:
 #   Calibration intercept  logistic regression of HD on an intercept with
 #                          logit(p) as offset; 0 is ideal, > 0 means predicted
 #                          risks are too low on average, < 0 too high
@@ -49,6 +46,12 @@
 # 1) SETTINGS
 # ==========================================================================
 
+CAL_RESULTS_FILE <- "DMFT_Age_BMI_Summary_DMFT_cutoff13median_conf_AgeDOS_BMI_allBiomarkers_noRatios_noVif_exhaustive12_beam3.xlsx"
+# Resolve helper beside this script (Source in RStudio or source() with a full path).
+.dmft_source_dir <- tryCatch(dirname(normalizePath(sys.frame(1)$ofile)), error=function(e)getwd())
+source(file.path(.dmft_source_dir, "00_DMFT_Result_Reader.R"), local=TRUE)
+CAL_SOURCE <- dmft_read_results(CAL_RESULTS_FILE)
+if(!isTRUE(CAL_SOURCE$summary))stop("Set CAL_RESULTS_FILE to the new age/BMI summary workbook.")
 CAL_SEED  <- 2026
 CAL_BOOT  <- 2000      # bootstrap resamples of participants (about 30 s per model)
 CAL_SPAN  <- 0.75      # loess span of the calibration curves
@@ -69,13 +72,17 @@ if (!dir.exists(OUT_DIR)) dir.create(OUT_DIR, recursive = TRUE)
 # One entry per model: label, panel size, data frame (id, rep, y, p) and the
 # workbook's threshold when known.
 
-.cal_case <- if (exists(".lev")) .lev[2] else "HD"
+.cal_case <- "HD"
 .cal_rep  <- function(resample) sub("^.*\\.(Rep[0-9]+)$", "\\1", resample)
 .cal_frame <- function(rowIndex, resample, obs, p) {
+  if(anyNA(obs) || !all(as.character(obs) %in% c("LD","HD")))stop("Expected LD/HD outcome labels.")
   d <- data.frame(id = as.integer(rowIndex), rep = .cal_rep(as.character(resample)),
                   y = as.integer(as.character(obs) == .cal_case), p = as.numeric(p))
-  if (anyNA(d$p) || anyNA(d$id)) stop("Missing predictions or row indices in the out-of-fold predictions.")
+  if (anyNA(d$p) || anyNA(d$id) || any(!is.finite(d$p)) || any(d$p<0 | d$p>1)) stop("Missing predictions or row indices in the out-of-fold predictions.")
   if (length(unique(d$y)) != 2) stop("The out-of-fold predictions need both outcome groups.")
+  if(anyDuplicated(paste(d$id,d$rep)))stop("Duplicate participant/repeat predictions.")
+  if(any(vapply(split(d$y,d$id),function(v)length(unique(v))!=1L,logical(1))))stop("Participant outcomes differ between repeats.")
+  if(any(table(d$id,d$rep)!=1L))stop("Each participant needs exactly one held-out prediction per repeat.")
   d
 }
 .cal_name <- function(k) if (k == 0) "Age + BMI only" else sprintf("%d biomarker%s + age + BMI", k, if (k == 1) "" else "s")
@@ -90,7 +97,9 @@ if (exists("FIG_REFITS") && length(FIG_REFITS)) {
                              data = .cal_frame(r$pred$rowIndex, r$pred$Resample, r$pred$obs, r$pred$p),
                              threshold = if (exists("FIG_BEST")) FIG_BEST[[kk]]$row$Threshold else NA_real_)
   }
-  CAL_TAG <- if (exists("FILE_TAG")) FILE_TAG else "DMFT"
+  CAL_TAG <- FILE_TAG
+  if(!exists("FIG_VERIFIED") || !identical(FIG_VERIFIED$source_md5,unname(tools::md5sum(CAL_RESULTS_FILE))))
+    stop("The in-memory refits do not belong to this summary. Run the updated figures script first.")
 } else {
   .files <- list.files(OUT_DIR, pattern = "^OOF_predictions_k([0-9]+)_(.+)\\.csv$")
   .files <- .files[grepl("_Biomarkers_Age_BMI_.*_exhaustive12_beam3\\.csv$", .files)]
@@ -111,6 +120,7 @@ if (exists("FIG_REFITS") && length(FIG_REFITS)) {
   CAL_MODELS <- CAL_MODELS[order(as.integer(names(CAL_MODELS)))]
 }
 
+if(!identical(CAL_TAG,paste("Biomarkers_Age_BMI",CAL_SOURCE$registry_key,sep="_")))stop("Prediction file tag does not match the new summary.")
 .n_ids <- vapply(CAL_MODELS, function(m) length(unique(m$data$id)), integer(1))
 if (length(unique(.n_ids)) != 1)
   stop("The models do not cover the same participants: ", paste(.n_ids, collapse = ", "), call. = FALSE)
@@ -162,13 +172,22 @@ cal_metrics <- function(p, y, thr) {
 
 cal_evaluate <- function(m, B = CAL_BOOT, seed = CAL_SEED) {
   d <- m$data
+  row <- CAL_SOURCE$best_by_size[CAL_SOURCE$best_by_size$N_Biomarkers==m$k,,drop=FALSE]
+  if(nrow(row)!=1L)stop("Panel size missing from summary.")
+  m$threshold <- row$Threshold
+  ids <- !duplicated(d$id)
+  if(sum(ids)!=row$N || sum(d$y[ids]==0)!=row$LD || sum(d$y[ids]==1)!=row$HD)stop("Prediction cohort differs from summary.")
   thr <- cal_youden(d$p, d$y)
   if (is.finite(m$threshold) && abs(thr - m$threshold) > 1e-6)
-    warning(sprintf("%s: Youden threshold %.6f differs from the workbook's %.6f; the workbook's is used.",
+    stop(sprintf("%s: Youden threshold %.6f differs from the workbook's %.6f; predictions must match before calibration.",
                     m$label, thr, m$threshold))
   if (is.finite(m$threshold)) thr <- m$threshold
   est <- cal_metrics(d$p, d$y, thr)
 
+  row <- CAL_SOURCE$best_by_size[CAL_SOURCE$best_by_size$N_Biomarkers==m$k,,drop=FALSE]
+  if(nrow(row)!=1L || max(abs(c(est["AUC"]-row$AUC,est["Balanced_accuracy"]-row$Balanced_Accuracy,
+                               est["Sensitivity"]-row$Sensitivity,est["Specificity"]-row$Specificity)))>1e-6)
+    stop("Out-of-fold performance does not match the new summary for panel size ",m$k)
   # repeat-specific values
   reps <- split(seq_len(nrow(d)), d$rep)
   rep_vals <- t(vapply(reps, function(ix) cal_metrics(d$p[ix], d$y[ix], thr), numeric(length(est))))
@@ -218,7 +237,7 @@ utils::write.csv(CAL_RESULTS, file.path(OUT_DIR, sprintf("Calibration_metrics_%s
 # ==========================================================================
 
 .ks_avail <- vapply(CAL_MODELS, `[[`, integer(1), "k")
-.k_fig <- if (!is.null(CAL_K)) CAL_K else if (exists("BEST_OVERALL_K")) BEST_OVERALL_K else max(.ks_avail)
+.k_fig <- if (!is.null(CAL_K)) CAL_K else as.integer(CAL_SOURCE$best_overall$N_Biomarkers)
 if (!.k_fig %in% .ks_avail) stop("CAL_K = ", .k_fig, " is not among the models: ", paste(.ks_avail, collapse = ", "))
 CAL_FIG_MODEL <- CAL_MODELS[[as.character(.k_fig)]]
 
@@ -352,7 +371,7 @@ if (exists("draw_roc") && is.function(draw_roc) && exists("FIG_REFITS")) {
   "The positive calibration intercept indicates that predicted risks were, on average, lower than the observed HD proportion."
 } else if (.int_hi < 0) {
   "The negative calibration intercept indicates that predicted risks were, on average, higher than the observed HD proportion."
-} else "The calibration intercept was compatible with 0, indicating no systematic over- or underestimation."
+} else "The calibration intercept interval included 0; systematic over- or underestimation was not clearly detected."
 .extreme <- .r$Share_predictions_below_0.001_or_above_0.999[1]
 
 .base <- CAL_RESULTS[CAL_RESULTS$Panel_size == 0, ]

@@ -2,6 +2,8 @@
 
 [Open the calculator](https://qiyan14.github.io/dmft-calculator/)
 
+The latest figure, equation and calibration scripts read the new age/BMI summary workbook. See [analysis/README.md](analysis/README.md) for the revised run order and the added held-out permutation-importance figure. The summary identifies the selected panel and threshold, but new coefficients and calibration values still require matching participant-level data/predictions.
+
 This version adjusts every study biomarker panel for **Age_DOS and BMI**, both continuous in their original units. Sex is no longer a model covariate or a complete-case eligibility requirement. Table 1 can still describe sex and other participant characteristics.
 
 The study search evaluates every single biomarker and every pair, then uses beam search from three through six biomarkers. With 472 candidates there are 111,156 pairs. Beam search extends retained panels at the preceding size; it does not evaluate all possible panels of size three or larger. The existing sweep, finalist scoring, cross-validation settings, ranking, and repeat-percentile outputs are preserved. Runtime increases because every pair is evaluated.

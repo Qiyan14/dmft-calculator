@@ -1,6 +1,7 @@
 # Export the best DMFT panel from the ONE workbook specified below.
 # Run 01_Preprocessing_DMFT_Age_BMI.R first, then source this file
-# in the SAME R session. No panel search or cross-validation is rerun.
+# in the SAME R session. For the summary workbook run script 03 first to verify CV refits.
+# This equation script itself does not rerun the panel search or cross-validation.
 # data.dfPH biomarkers must be LD-standardized log2(raw + 5e-7).
 # Age_DOS and BMI retain original units.
 # Requires readxl for Excel input. All fitting/export operations use base R.
@@ -18,21 +19,17 @@
 # Aggregate results alone cannot recover the intercept/covariate coefficients;
 # the original preprocessed participant data are required for the final refit.
 
-RESULTS_FILE <- NULL # NULL derives the age/BMI workbook name from registry_key
+RESULTS_FILE <- "DMFT_Age_BMI_Summary_DMFT_cutoff13median_conf_AgeDOS_BMI_allBiomarkers_noRatios_noVif_exhaustive12_beam3.xlsx"
+# Resolve helper beside this script (Source in RStudio or source() with a full path).
+.dmft_source_dir <- tryCatch(dirname(normalizePath(sys.frame(1)$ofile)), error=function(e)getwd())
+source(file.path(.dmft_source_dir, "00_DMFT_Result_Reader.R"), local=TRUE)
+
 RESULTS_DIR <- getwd()
 OUTPUT_DIR <- getwd()
 # Set RESULTS_FILE to its full path if it is not in RESULTS_DIR.
 # Only this workbook is read; no other scenario workbooks are required.
 
-read_dmft_workbook <- function(path) {
-  if (!requireNamespace("readxl", quietly = TRUE))
-    stop("Install readxl first: install.packages('readxl')")
-  pars <- as.data.frame(readxl::read_excel(path, sheet = "Analysis_Parameters", col_types = "text"))
-  sheets <- grep("^Results_[0-6]_Biomarkers$", readxl::excel_sheets(path), value = TRUE)
-  list(path = path, parameters = pars,
-       tables = setNames(lapply(sheets, function(sh)
-         as.data.frame(readxl::read_excel(path, sheet = sh))), sheets))
-}
+read_dmft_workbook <- function(path) dmft_read_results(path)
 
 dmft_parameter <- function(wb, name) {
   p <- wb$parameters
@@ -67,13 +64,13 @@ select_dmft_panel <- function(workbooks, registry_key) {
       x <- wb$tables[[sh]]
       need <- c(if (k) paste0("Biomarker", seq_len(k)), "Balanced_Accuracy", "AUC", "Threshold")
       if (!all(need %in% names(x))) stop("Missing result columns in ", wb$path, ": ", sh)
-      x$.source_row <- seq_len(nrow(x))
+      x$.source_row <- if (".excel_row" %in% names(x)) x$.excel_row - 1L else seq_len(nrow(x))
       if (!is.numeric(x$Balanced_Accuracy) || !is.numeric(x$AUC)) stop("Non-numeric performance columns.")
       x <- x[is.finite(x$Balanced_Accuracy) & is.finite(x$AUC), , drop = FALSE]
       if (!nrow(x)) stop("No usable results in ", wb$path, ": ", sh)
       x <- x[order(-x$Balanced_Accuracy, -x$AUC, x$.source_row), , drop = FALSE]
       candidates[[length(candidates) + 1L]] <- list(k = k, row = x[1, , drop = FALSE],
-        sheet = sh, workbook = wb, configuration = config, covariates = covs)
+        sheet = if (isTRUE(wb$summary)) "Best_By_Size" else sh, workbook = wb, configuration = config, covariates = covs)
     }
   }
   if (!length(candidates)) stop("No candidate panels found.")
@@ -136,6 +133,15 @@ export_dmft_equation <- function(data, reference_stats, registry_key,
       stop("Saved cohort does not match this preprocessing session.")
   }
   message("Age/BMI cohort: ", nrow(d), "; excluded ", sum(!keep))
+  if (isTRUE(wb$summary)) {
+    tag <- paste("Biomarkers_Age_BMI",registry_key,sep="_")
+    vf <- file.path(results_dir,paste0("Verified_refits_",tag,".rds"))
+    verified <- if(exists("FIG_VERIFIED",inherits=TRUE)) get("FIG_VERIFIED",inherits=TRUE) else if(file.exists(vf))readRDS(vf) else NULL
+    if(is.null(verified) || !identical(verified$source_md5,unname(tools::md5sum(wb$path))) ||
+       !identical(verified$registry_key,registry_key) ||
+       !isTRUE(all.equal(verified$data[,c(predictors,"condL"),drop=FALSE],d[,c(predictors,"condL"),drop=FALSE],check.attributes=FALSE)))
+      stop("For a summary workbook, run 03_Figures_DMFT_Age_BMI.R first on the matching data/folds. Its verified refits are required before equation export.")
+  }
   mu <- sd_used <- setNames(numeric(0), character(0))
   if (length(markers)) {
     if (!all(c("Column", "Mean", "SD") %in% names(reference_stats)) || anyDuplicated(reference_stats$Column))
