@@ -19,7 +19,7 @@ The new selected panel has six biomarkers: Lachnoanaerobaculum orale; Olsenella 
 3. Source `03_Figures_DMFT_Age_BMI.R` using its full script path. It reconstructs and verifies out-of-fold predictions, writes the figures/model CSV and automatically runs variable importance. Set `MAKE_VARIABLE_IMPORTANCE <- FALSE` in script 03 if you want to run script 08 separately later. Change `VI_PERMUTATIONS` in script 08 to adjust the number of shuffles.
 4. Source `04_Export_DMFT_Equation_Age_BMI.R` for the full equation, coefficient table and model bundle. Keep the same session; its verified-data check prevents reuse of another run's coefficients.
 5. Source `05_Calibration_DMFT_Age_BMI.R` for calibration results and plots. On its own it can read the new `OOF_predictions_k<k>_<tag>.csv` files from `OUT_DIR`; the k=6 file is sufficient to calibrate the selected model alone.
-6. Load the new `dmft_age_bmi_model.csv` into the Shiny app. The old age/sex coefficients must not be used.
+6. The selected age/BMI model is bundled in the Shiny app (`app/app.R` and `06_Shiny_DMFT_Age_BMI.R`). After a refit, compare the new `dmft_age_bmi_model.csv` with the bundled coefficients before updating them; see `PUBLISHING.md`.
 
 Use full script paths when sourcing because preprocessing changes R's working directory. `readxl`, `caret` and `pROC` are needed for figures; equation/summary input uses `readxl`; permutation calculations use base R. Calibration uses base R plus `readxl`. The remaining scripts keep their existing package requirements.
 

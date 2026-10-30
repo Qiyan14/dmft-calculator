@@ -2,7 +2,9 @@
 
 [Open the calculator](https://qiyan14.github.io/dmft-calculator/)
 
-The latest figure, equation and calibration scripts read the new age/BMI summary workbook. See [analysis/README.md](analysis/README.md) for the revised run order and the added held-out permutation-importance figure. The summary identifies the selected panel and threshold, but new coefficients and calibration values still require matching participant-level data/predictions.
+The latest figure, equation and calibration scripts read the new age/BMI summary workbook. See [analysis/README.md](analysis/README.md) for the revised run order and the added held-out permutation-importance figure.
+
+**Model status:** the calculator bundles the full-precision coefficients of the selected six-biomarker age/BMI model from the final fit (`DMFT_equation.txt`): *Lachnoanaerobaculum orale* (LO), *Olsenella profusa* (OP), unclassified Bacteroidetes G5 (BG5), *Bacteroides heparinolyticus* (BH), Weeksellaceae G1 sp. HMT 900 (W900) and Peptostreptococcaceae G3 bacterium HMT 950 (P950), with age in years and BMI in kg/m². The classification threshold is 0.4303368621. In the development cohort (111 adults: 56 with DMFT ≤ 13 and 55 with DMFT > 13), five-fold cross-validation repeated 100 times gave balanced accuracy 88.07%, sensitivity 90.33%, specificity 85.82% and AUC 0.899. Panel and threshold selection used these predictions, so performance is exploratory and may be optimistic.
 
 This version adjusts every study biomarker panel for **Age_DOS and BMI**, both continuous in their original units. Sex is no longer a model covariate or a complete-case eligibility requirement. Table 1 can still describe sex and other participant characteristics.
 
@@ -27,17 +29,17 @@ The heatmap retains its original colors, black row outlines, and mismatch highli
 
 ## Shiny calculator
 
-Run `shiny::runApp("06_Shiny_DMFT_Age_BMI.R")`, or open the file in RStudio and click Run App. Shiny is required; readxl and writexl are optional for Excel uploads/downloads. In Selected DMFT model, upload the newly exported `dmft_age_bmi_model.csv`. For automatic desktop loading, put that CSV in the app's working directory before starting it.
+Run `shiny::runApp("06_Shiny_DMFT_Age_BMI.R")`, or open the file in RStudio and click Run App. Shiny is required; readxl and writexl are optional for Excel uploads/downloads. The online calculator and the desktop app contain the same bundled selected model. If a `dmft_age_bmi_model.csv` is placed in the desktop app's working directory, it is used only when it matches the bundled coefficients and threshold; use **Load a saved model** for any other model.
 
-Enter raw biomarker values, age in years and BMI in kg/m². The app applies `log2(raw + 5e-7)` exactly once; do not standardize the inputs. The age slider and overlapping comparison curves show the entered BMI versus BMI five units higher, holding biomarkers fixed. These are model scenarios, not causal effects.
+Choose **Selected DMFT model**, enter the six raw biomarker values, set age with the slider (years) and enter BMI (kg/m²), then click **Calculate risk**. **Fill example values** enters illustrative values that do not come from a participant (1, 1, 1, 0, 0, 0 for LO, OP, BG5, BH, W900, P950; age 40; BMI 25; estimated risk 73.8%). The app applies `log2(raw + 5e-7)` exactly once; do not standardize the inputs, and enter 0 for a biomarker that was not detected. After a calculation, the gauge, equation and calculation table update as the inputs change. There is no age comparison chart, because BMI is continuous rather than categorical.
 
-The selected panel, intercept, coefficients and classification threshold are read from the new export; no panel size is hardcoded. Previous age/sex coefficients and performance are not valid for the revised model. Until you run the new analysis and load its CSV, selected-model risk calculation is unavailable. Training on uploaded data remains available, with age and BMI selected by default when present and exhaustive sizes 1–2 followed by beam search. The browser refuses pair searches above 250,000 pairs rather than silently narrowing them; use the desktop analysis script for larger studies.
+Training on uploaded data remains available, with age and BMI selected by default when present and exhaustive sizes 1–2 followed by beam search. The browser refuses pair searches above 250,000 pairs rather than silently narrowing them; use the desktop analysis script for larger studies.
 
 ## Verification and limits
 
-Run `Rscript test_age_bmi.R` from this folder. The base-R tests use synthetic fixtures to check all 111,156 pairs, beam extensions from size three, workbook panel selection, cohort exclusions, raw-equation equivalence, CSV import/export, age/BMI curves, and rejection of stale models. They do not estimate study performance.
+`tests/test_selected_model.R` compares the app's calculation with the published age/BMI equation for 10,000 random inputs (including zero values, ages 18–100 and BMI 12–70), checks that the biomarker slopes equal the logarithms of the workbook's per-doubling odds ratios, saves and reloads the model, and checks the example values. It also uses synthetic fixtures to check all 111,156 pairs, beam extensions from size three, workbook panel selection, raw-equation equivalence, CSV import/export and rejection of stale models. These are implementation checks; they do not estimate study performance.
 
-All scripts were syntax-checked. The export and prediction tests passed on synthetic data. The complete study has not been rerun because the original participant files are not present. New coefficients, figures, cohort counts and performance must come from that run. Cross-validation after panel/threshold selection is developmental performance and may be optimistic; these changes do not provide independent validation.
+Cross-validation after panel and threshold selection is developmental performance and may be optimistic; independent validation is still required.
 
 ## Repository paths
 

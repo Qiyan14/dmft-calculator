@@ -15,7 +15,7 @@ shinylive::export(
     title = "Salivary biomarker DMFT calculator",
     include_in_head = paste0(
       '<meta name="description" content="Estimate the risk of high DMFT (DMFT > 13) ',
-      'from six salivary biomarkers, age and sex. Runs entirely in your browser.">'
+      'from six salivary biomarkers, age and BMI. Runs entirely in your browser.">'
     ),
     # Loading message shown while R starts in the browser
     include_after_body = paste(readLines("loading.html", encoding = "UTF-8"), collapse = "\n")
