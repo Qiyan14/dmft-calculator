@@ -49,7 +49,7 @@ MINUS <- "−"
 # scaling used in fitting are absorbed into the intercept and slopes).
 
 PUBLISHED_MODEL <- list(
-  source = "published", name = "Selected DMFT model (age + BMI)",
+  source = "published", name = "Study DMFT model, trained on the 111 study participants",
   description = "Six salivary biomarkers with age and BMI (logistic regression).",
   case_label = "high DMFT (DMFT > 13)", ref_label = "low DMFT (DMFT ≤ 13)",
   case_short = "HD", ref_short = "LD", transform = "log2", delta = 5e-7,
@@ -106,7 +106,7 @@ selected_age_bmi_model <- function(tab, filename = "dmft_age_bmi_model.csv") {
       !identical(meta("(Search design)"), "exhaustive12_beam3"))
     stop("Use dmft_age_bmi_model.csv exported after the new age/BMI search (exhaustive sizes 1–2, beam from 3).")
   m$analysis_configuration <- "Biomarkers_Age_BMI"; m$search_design <- "exhaustive12_beam3"
-  m$source <- "published"; m$name <- "Selected DMFT model (age + BMI)"
+  m$source <- "published"; m$name <- "Study DMFT model, trained on the 111 study participants"
   m$description <- sprintf("%d salivary biomarkers with age and BMI.", nrow(m$markers))
   m$covariates$label <- ifelse(m$covariates$var=="BMI","Body mass index","Age")
   m$covariates$unit <- ifelse(m$covariates$var=="BMI","kg/m²","years")
@@ -116,7 +116,7 @@ selected_age_bmi_model <- function(tab, filename = "dmft_age_bmi_model.csv") {
 }
 # Desktop only: a dmft_age_bmi_model.csv next to the app is used if it is the bundled model
 # (same biomarkers, coefficients and threshold); anything else is refused, and the bundled model
-# stays in use. Load other models with "Load a saved model".
+# stays in use. Load other models with "Saved model".
 load_published_coefficients <- function(model, dir = getwd()) {
   f <- file.path(dir, "dmft_age_bmi_model.csv")
   if (!file.exists(f)) return(list(model = model, msg = NULL))
@@ -127,7 +127,7 @@ load_published_coefficients <- function(model, dir = getwd()) {
     if (nrow(m$markers) != nrow(model$markers) || anyNA(i) || anyNA(k) ||
         max(abs(m$markers$coef[i] - model$markers$coef), abs(m$covariates$coef[k] - model$covariates$coef),
             abs(m$intercept - model$intercept)) > 1e-9 || abs(m$threshold - model$threshold) > 1e-8)
-      stop("it is not the bundled selected model; load it with \"Load a saved model\" instead.")
+      stop("it is not the bundled study model; load it with \"Saved model\" instead.")
     out <- model
     out$markers$coef <- m$markers$coef[i]; out$covariates$coef <- m$covariates$coef[k]
     out$intercept <- m$intercept; out$threshold <- m$threshold
@@ -771,7 +771,7 @@ fit_panel_model <- function(res, k, rank) {
   sep <- any(grepl("fitted probabilities numerically 0 or 1|did not converge", warn)) || max(abs(b[-1])) > 15
   s <- prep$s; g <- prep$groups
   list(source = "trained",
-       name = sprintf("Model trained on your data (%d-marker panel, rank %d)", k, rank),
+       name = sprintf("Your model, trained on the data you uploaded (%d-marker panel, rank %d)", k, rank),
        description = paste("Panel:", tab$Panel[rank]),
        case_label = g$case_name, ref_label = g$ref_name, case_short = g$case_name, ref_short = g$ref_name,
        transform = s$transform, delta = s$delta, intercept = unname(b0),
@@ -1159,7 +1159,7 @@ start_tab <- tabPanel(
     column(6, div(class = "card",
       h3("Calculate a patient's risk"),
       p(class = "lead-muted", "Enter six absolute raw concentration values with age and BMI to estimate the",
-        "risk of high DMFT (DMFT > 13) with the selected model, or use a model you trained."),
+        "risk of high DMFT (DMFT > 13) with the study model, or with a model trained on your own data."),
       actionButton("go_predict", "Go to Risk Calculator", class = "btn-accent")))
   ),
   fluidRow(column(12, p(class = "footer-note",
@@ -1244,9 +1244,10 @@ predict_tab <- tabPanel(
   "Risk Calculator", value = "predict",
   fluidRow(column(12,
     h3("Calculate individual risk"),
-    radioButtons("model_choice", NULL, inline = TRUE,
-                 choices = c("Selected DMFT model" = "published", "Model trained on your data" = "trained",
-                             "Load a saved model" = "loaded")),
+    radioButtons("model_choice", "Choose a model", inline = FALSE, width = "100%",
+                 choices = c("Study DMFT model (trained on the 111 study participants)" = "published",
+                             "Your model (trained on the data you uploaded)" = "trained",
+                             "Saved model (loaded from a model file)" = "loaded")),
     conditionalPanel("input.model_choice == 'loaded'",
       fileInput("model_file", "Saved model file (.csv from \"Download model\")", accept = ".csv")),
     uiOutput("model_header"))),

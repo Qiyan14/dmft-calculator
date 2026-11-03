@@ -15,4 +15,4 @@ The study uses numeric age and BMI with exhaustive single-marker and pair search
 
 If the model is refitted, replace the bundled coefficients, threshold, cohort and performance together, then update the published equation in `tests/test_selected_model.R` and rerun the test.
 
-The desktop app `analysis/06_Shiny_DMFT_Age_BMI.R` is `app/app.R` with one difference: it checks a `dmft_age_bmi_model.csv` in its working directory and uses it only when it matches the bundled model. Other models are loaded with **Load a saved model**.
+The desktop app `analysis/06_Shiny_DMFT_Age_BMI.R` is `app/app.R` with one difference: it checks a `dmft_age_bmi_model.csv` in its working directory and uses it only when it matches the bundled model. Other models are loaded with **Saved model**.
