@@ -19,17 +19,18 @@
 #
 # Two versions are built from this file:
 #   Desktop - this file, run in a local R session. A dmft_age_bmi_model.csv
-#             (exported by 04_Export_DMFT_Equation_Age_BMI.R) placed next to it is
-#             used only if it matches the bundled coefficients (checks below).
+#             (exported by 04b_Export_DMFT_Equation_Single_Biomarker.R) placed next
+#             to it is used only if it matches the bundled coefficients (checks below).
 #   Browser - app/app.R in the dmft-calculator repository: this file with the
 #             bundled coefficients only (see the PUB line in section 11),
 #             compiled by build.R with Shinylive to run R in the browser (webR).
 #
-# Selected model: six biomarkers + age + BMI (exhaustive sizes 1–2, beam from 3).
-# Full-precision coefficients from the final age/BMI fit are bundled below.
+# Study model: one biomarker (Bacteroides heparinolyticus) + age + BMI, the panel size that
+# generalized best under nested cross-validation (search: exhaustive sizes 1–2, beam from 3).
+# Full-precision coefficients from the final fit (04b_Export_DMFT_Equation_Single_Biomarker.R).
 # ==========================================================================
 
-APP_VERSION <- "6.2 (age + BMI)"
+APP_VERSION <- "7.0 (age + BMI)"
 
 suppressPackageStartupMessages(library(shiny))
 HAS_READXL  <- requireNamespace("readxl", quietly = TRUE)
@@ -50,30 +51,27 @@ MINUS <- "−"
 
 PUBLISHED_MODEL <- list(
   source = "published", name = "Study DMFT model, trained on the 111 study participants",
-  description = "Six salivary biomarkers with age and BMI (logistic regression).",
+  description = "One salivary biomarker with age and BMI (logistic regression).",
   case_label = "high DMFT (DMFT > 13)", ref_label = "low DMFT (DMFT ≤ 13)",
   case_short = "HD", ref_short = "LD", transform = "log2", delta = 5e-7,
   analysis_configuration = "Biomarkers_Age_BMI", search_design = "exhaustive12_beam3",
-  intercept = -25.593207966142202,
+  intercept = -23.0058981831817,
   markers = data.frame(
-    key = c("Lachnoanaerobaculum_orale", "Olsenella_profusa", "Bacteroidetes_G5_Bacteroidetes_G5_unclassified",
-            "Bacteroides_heparinolyticus", "Weeksellaceae_G1_sp._HMT_900", "Peptostreptococcaceae_G3_bacterium_HMT_950"),
-    abbr = c("LO", "OP", "BG5", "BH", "W900", "P950"),
-    label = c("*Lachnoanaerobaculum orale*", "*Olsenella profusa*", "unclassified Bacteroidetes G5",
-              "*Bacteroides heparinolyticus*", "Weeksellaceae G1 sp. HMT 900", "Peptostreptococcaceae G3 bacterium HMT 950"),
-    coef = c(0.054716075620806985, 0.93738465006011396, -0.89967475391325979,
-             -0.91717962460446523, 0.86395256497572881, -0.93066377384919741), stringsAsFactors = FALSE),
+    key = "Bacteroides_heparinolyticus", abbr = "BH", label = "*Bacteroides heparinolyticus*",
+    coef = -0.846102247378536, stringsAsFactors = FALSE),
   covariates = data.frame(var = c("Age_DOS", "BMI"), term = c("Age_DOS", "BMI"),
     abbr = c("Age", "BMI"), label = c("Age", "Body mass index"), unit = c("years", "kg/m²"),
     type = c("numeric", "numeric"), level = c(NA_character_, NA_character_),
-    coef = c(0.12236268144283166, 0.045571695632458567), stringsAsFactors = FALSE),
-  cov_levels = list(), level_labels = list(), threshold = 0.4303368621,
+    coef = c(0.100689075458851, 0.052697388841799), stringsAsFactors = FALSE),
+  cov_levels = list(), level_labels = list(), threshold = 0.4135852879,
   cohort = "111 adults: 56 with DMFT ≤ 13 and 55 with DMFT > 13.",
-  performance = c("Balanced accuracy" = 0.8807435065, "Sensitivity" = 0.9032727273,
-                  "Specificity" = 0.8582142857, "AUC" = 0.8987005195),
-  performance_note = paste("Five-fold cross-validation repeated 100 times. Panel selection and threshold tuning used these",
-    "predictions, so development performance may be optimistic; not externally validated."),
-  caution = "Exploratory model; most biomarker coefficient estimates are unstable. Age is in years and BMI in kg/m²."
+  performance = c("Balanced accuracy" = 0.8066071429, "Sensitivity" = 0.84,
+                  "Specificity" = 0.7732142857, "AUC" = 0.8392012987),
+  performance_note = paste("Five-fold cross-validation repeated 10 times. Panel and threshold selection used these",
+    "predictions, so development performance may be optimistic; when the selection was repeated within each training set",
+    "(nested cross-validation), balanced accuracy was 75.7%. Not externally validated."),
+  caution = paste("Development model; the *Bacteroides heparinolyticus* coefficient is imprecise, and independent validation",
+    "is required. Age is in years and BMI in kg/m².")
 )
 
 # Display label of a factor level (the level itself when the model has no labels)
@@ -85,7 +83,7 @@ level_label <- function(m, v, lev) {
 # Choices for a factor input: values are the model's levels, names their labels
 level_choices <- function(m, v, lv) stats::setNames(lv, level_label(m, v, lv))
 
-EXAMPLE <- list(markers = c(1, 1, 1, 0, 0, 0), covariates = c(40, 25))   # illustrative, not a participant
+EXAMPLE <- list(markers = c(0), covariates = c(40, 25))   # illustrative, not a participant
 
 model_ready <- function(m) {
   !is.null(m) && nrow(m$markers) > 0L && is.finite(m$threshold) && is.finite(m$intercept) && all(is.finite(m$markers$coef)) &&
@@ -1158,7 +1156,7 @@ start_tab <- tabPanel(
       actionButton("go_analysis", "Go to Train Your Own Data", class = "btn-accent"))),
     column(6, div(class = "card",
       h3("Calculate a patient's risk"),
-      p(class = "lead-muted", "Enter six absolute raw concentration values with age and BMI to estimate the",
+      p(class = "lead-muted", "Enter the absolute raw concentration of one salivary biomarker with age and BMI to estimate the",
         "risk of high DMFT (DMFT > 13) with the study model, or with a model trained on your own data."),
       actionButton("go_predict", "Go to Risk Calculator", class = "btn-accent")))
   ),

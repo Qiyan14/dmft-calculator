@@ -2,7 +2,9 @@
 
 This bundle is updated for the supplied age/BMI summary workbook. It includes the workbook and the original preprocessing, search and Shiny scripts for continuity.
 
-The new selected panel has six biomarkers: Lachnoanaerobaculum orale; Olsenella profusa; unclassified Bacteroidetes G5; Bacteroides heparinolyticus; Weeksellaceae G1 sp. HMT 900; and Peptostreptococcaceae G3 bacterium HMT 950. Age_DOS and BMI remain continuous adjustment variables. The summary reports 111 participants (56 LD, 55 HD), balanced accuracy 0.8807435065, AUC 0.8987005195, sensitivity 0.9032727273, specificity 0.8582142857 and threshold 0.4303368621. The BA endpoints 0.8469926948–0.9058238636 are repeat percentiles, not independent-validation confidence intervals.
+The highest-ranked panel in that summary has six biomarkers: Lachnoanaerobaculum orale; Olsenella profusa; unclassified Bacteroidetes G5; Bacteroides heparinolyticus; Weeksellaceae G1 sp. HMT 900; and Peptostreptococcaceae G3 bacterium HMT 950. Age_DOS and BMI remain continuous adjustment variables. The summary reports 111 participants (56 LD, 55 HD), balanced accuracy 0.8807435065, AUC 0.8987005195, sensitivity 0.9032727273, specificity 0.8582142857 and threshold 0.4303368621. The BA endpoints 0.8469926948–0.9058238636 are repeat percentiles, not independent-validation confidence intervals.
+
+**Calculator model (10-repeat run, November 2026).** Under nested cross-validation the best single biomarker generalized better than larger panels, so the calculator now bundles the single-biomarker model: *Bacteroides heparinolyticus* with age and BMI, threshold 0.4135852879. `04b_Export_DMFT_Equation_Single_Biomarker.R` exports it from the 10-repeat run's Biomarkers_Age_BMI workbook (top row of `Results_1_Biomarkers`): in the preprocessing session it refits the model, checks the refit against the workbook, and writes `dmft_age_bmi_model.csv`, the equation text and the `PUBLISHED_MODEL` block for `app/app.R`.
 
 ## What changed
 
@@ -19,7 +21,7 @@ The new selected panel has six biomarkers: Lachnoanaerobaculum orale; Olsenella 
 3. Source `03_Figures_DMFT_Age_BMI.R` using its full script path. It reconstructs and verifies out-of-fold predictions, writes the figures/model CSV and automatically runs variable importance. Set `MAKE_VARIABLE_IMPORTANCE <- FALSE` in script 03 if you want to run script 08 separately later. Change `VI_PERMUTATIONS` in script 08 to adjust the number of shuffles.
 4. Source `04_Export_DMFT_Equation_Age_BMI.R` for the full equation, coefficient table and model bundle. Keep the same session; its verified-data check prevents reuse of another run's coefficients.
 5. Source `05_Calibration_DMFT_Age_BMI.R` for calibration results and plots. On its own it can read the new `OOF_predictions_k<k>_<tag>.csv` files from `OUT_DIR`; the k=6 file is sufficient to calibrate the selected model alone.
-6. The selected age/BMI model is bundled in the Shiny app (`app/app.R` and `06_Shiny_DMFT_Age_BMI.R`). After a refit, compare the new `dmft_age_bmi_model.csv` with the bundled coefficients before updating them; see `PUBLISHING.md`.
+6. The calculator's model, the single-biomarker model exported by `04b_Export_DMFT_Equation_Single_Biomarker.R`, is bundled in the Shiny app (`app/app.R` and `06_Shiny_DMFT_Age_BMI.R`). After a refit, compare the new `dmft_age_bmi_model.csv` with the bundled coefficients before updating them; see `PUBLISHING.md`.
 
 Use full script paths when sourcing because preprocessing changes R's working directory. `readxl`, `caret` and `pROC` are needed for figures; equation/summary input uses `readxl`; permutation calculations use base R. Calibration uses base R plus `readxl`. The remaining scripts keep their existing package requirements.
 
