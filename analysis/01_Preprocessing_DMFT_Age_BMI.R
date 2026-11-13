@@ -7,7 +7,7 @@
 #               vs high caries burden (Clinical_Caries), among subjects with
 #               healthy periodontium or gingivitis
 #   DMFT        low vs high DMFT (decayed + missing + filled teeth), split at
-#               DMFT_CUTOFF
+#               one cut-off or at an age-specific threshold (DMFT_GROUPING)
 #   validation  the panels of Miller, Yan et al. 2025 (J Clin Periodontol,
 #               doi:10.1111/jcpe.70049) tested on this dataset, in groups of
 #               periodontitis cases against the same healthy controls
@@ -80,10 +80,29 @@ CARIES_VIF                <- TRUE
 
 # --- DMFT -------------------------------------------------------------------
 # DMFT = the sum of DMFT_COMPONENTS (NA if any of them is NA). LD (low DMFT) if
-# DMFT <= DMFT_CUTOFF, HD (high DMFT) if above. DMFT_CUTOFF = NULL splits at the
-# median of the analysed subjects (printed when the script runs).
+# DMFT <= the threshold, HD (high DMFT) if above. DMFT_GROUPING sets the threshold:
+#   "cutoff"      one cut-off for everyone: DMFT_CUTOFF, or the median of the
+#                 analysed subjects when DMFT_CUTOFF = NULL
+#   "age_nhanes"  the US mean DMFT for the subject's age group (DMFT_NHANES)
+#   "age_median"  the analysed subjects' median DMFT at the subject's age, from
+#                 median regression of DMFT on a natural spline of age with
+#                 DMFT_AGE_DF degrees of freedom (1 = a straight line); needs the
+#                 quantreg package
+# The age rules need DMFT_AGE_COL; subjects without an age get no group. Each
+# subject's threshold is kept in the column DMFT_threshold, and the thresholds
+# are printed when the script runs.
 DMFT_COMPONENTS         <- c("Missing_Teeth", "Restored_Teeth", "Teeth_wCarries")
-DMFT_CUTOFF             <- NULL
+DMFT_GROUPING           <- "cutoff"      # "cutoff" | "age_nhanes" | "age_median"
+DMFT_CUTOFF             <- NULL          # "cutoff" only
+DMFT_AGE_COL            <- "Age_DOS"     # age in years ("age_nhanes", "age_median")
+DMFT_AGE_DF             <- 3             # "age_median" only
+# Mean DMFT of US dentate adults, NHANES 2017-March 2020 (CDC, Oral Health
+# Surveillance Report 2024, Table 12 for ages 20-64, among adults with at least
+# one DMFT; Table 14 for 65 and over). from = the first age of each group; ages
+# under 20 take the 20-34 value.
+DMFT_NHANES <- data.frame(from      = c(0, 35, 50, 65, 75),
+                          label     = c("20-34", "35-49", "50-64", "65-74", "75+"),
+                          mean_DMFT = c(6.4, 8.5, 11.8, 14.8, 17.4))
 DMFT_PERIODONTAL_FILTER <- NULL          # original diagnosis kept, e.g. c("Healthy periodontium", "Gingivitis"); NULL = everyone
 DMFT_MARKERS            <- "all"         # "selected" (biomarkers_DMFT in script1_panels.R) | "all"
 DMFT_RATIO_FEATURES     <- FALSE
@@ -147,8 +166,23 @@ if (PROJECT == "caries") {
 }
 if (PROJECT == "DMFT") {
   check_choice(DMFT_MARKERS, c("selected", "all"), "DMFT_MARKERS")
+  check_choice(DMFT_GROUPING, c("cutoff", "age_nhanes", "age_median"), "DMFT_GROUPING")
   if (!is.null(DMFT_CUTOFF) && (length(DMFT_CUTOFF) != 1 || !is.numeric(DMFT_CUTOFF)))
     stop("DMFT_CUTOFF must be one number, or NULL for the median.", call. = FALSE)
+  if (DMFT_GROUPING != "cutoff" && !is.null(DMFT_CUTOFF))
+    warning(sprintf("DMFT_CUTOFF is ignored: DMFT_GROUPING = \"%s\" uses age-specific thresholds.",
+                    DMFT_GROUPING), call. = FALSE)
+  if (DMFT_GROUPING == "age_nhanes" &&
+      (is.unsorted(DMFT_NHANES$from, strictly = TRUE) || DMFT_NHANES$from[1] != 0))
+    stop("DMFT_NHANES$from must start at 0 and increase.", call. = FALSE)
+  if (DMFT_GROUPING == "age_median") {
+    if (!requireNamespace("quantreg", quietly = TRUE))
+      stop('DMFT_GROUPING = "age_median" needs the quantreg package: install.packages("quantreg")',
+           call. = FALSE)
+    if (length(DMFT_AGE_DF) != 1 || !is.numeric(DMFT_AGE_DF) || DMFT_AGE_DF < 1 ||
+        DMFT_AGE_DF != round(DMFT_AGE_DF))
+      stop("DMFT_AGE_DF must be a whole number, 1 or more.", call. = FALSE)
+  }
 }
 if (PROJECT == "validation") {
   check_choice(VALIDATION_DESIGN, c("PanelValidation", "PaperDesign"), "VALIDATION_DESIGN")
@@ -820,6 +854,8 @@ data.df8_log2[, biomarkers_all_panels] <-
 cat(sprintf("\n===== Outcome: %s =====\n", CONDL_SOURCE))
 CARIES_N_GAP_DROPPED <- NULL
 DMFT_CUTOFF_USED     <- NULL
+DMFT_GROUP_TEXT      <- NULL
+DMFT_AGE_FIT         <- NULL
 
 if (PROJECT == "perio") {
 
@@ -871,13 +907,88 @@ if (PROJECT == "perio") {
   # the subjects analysed: DMFT known and, with a filter, the kept diagnoses
   in_pool <- !is.na(dmft) & (is.null(DMFT_PERIODONTAL_FILTER) |
                                data.df8_log2$condL_original %in% DMFT_PERIODONTAL_FILTER)
-  DMFT_CUTOFF_USED <- if (is.null(DMFT_CUTOFF)) median(dmft[in_pool]) else DMFT_CUTOFF
-  data.df8_log2$condL <- ifelse(is.na(dmft), NA_character_,
-                                ifelse(dmft <= DMFT_CUTOFF_USED, "Low_DMFT", "High_DMFT"))
-  cat(sprintf("  DMFT: <= %g Low_DMFT | > %g High_DMFT (cut-off: %s)\n", DMFT_CUTOFF_USED, DMFT_CUTOFF_USED,
-              if (is.null(DMFT_CUTOFF)) "median of the analysed subjects" else "DMFT_CUTOFF"))
+
+  # each subject's threshold: LD if DMFT <= it, HD if above
+  if (DMFT_GROUPING == "cutoff") {
+    DMFT_CUTOFF_USED <- if (is.null(DMFT_CUTOFF)) median(dmft[in_pool]) else DMFT_CUTOFF
+    dmft_threshold   <- rep(DMFT_CUTOFF_USED, length(dmft))
+    DMFT_GROUP_TEXT  <- sprintf("<= %g -> LD (low DMFT) | > %g -> HD (high DMFT) (%s)",
+                                DMFT_CUTOFF_USED, DMFT_CUTOFF_USED,
+                                if (is.null(DMFT_CUTOFF)) "median of the analysed subjects" else "fixed")
+  } else {
+    if (!DMFT_AGE_COL %in% colnames(data.df8_log2))
+      stop(sprintf("Age column '%s' (DMFT_AGE_COL) not found.", DMFT_AGE_COL), call. = FALSE)
+    dmft_age <- suppressWarnings(as.numeric(as.character(data.df8_log2[[DMFT_AGE_COL]])))
+    DMFT_CUTOFF_USED <- NA_real_
+    dmft_threshold   <- rep(NA_real_, length(dmft))
+
+    if (DMFT_GROUPING == "age_nhanes") {
+      dmft_band <- findInterval(floor(dmft_age), DMFT_NHANES$from)      # NA when age is NA
+      dmft_in_band <- !is.na(dmft_band) & dmft_band > 0
+      dmft_threshold[dmft_in_band] <- DMFT_NHANES$mean_DMFT[dmft_band[dmft_in_band]]
+      DMFT_GROUP_TEXT <- sprintf(
+        "> the US mean for the age group -> HD (high DMFT), otherwise LD (NHANES 2017-March 2020: %s)",
+        paste(DMFT_NHANES$label, DMFT_NHANES$mean_DMFT, collapse = ", "))
+      n_young <- sum(in_pool & !is.na(dmft_age) & dmft_age < 20)
+      if (n_young > 0) cat(sprintf("  %d subject(s) under 20 take the 20-34 value.\n", n_young))
+
+    } else {   # age_median
+      dmft_fit_rows <- in_pool & !is.na(dmft_age)
+      dmft_basis    <- splines::ns(dmft_age[dmft_fit_rows], df = DMFT_AGE_DF)
+      # DMFT is a count, so the median line can pass through tied values and
+      # quantreg warns that the solution may be nonunique; that warning is muffled
+      dmft_qfit <- withCallingHandlers(
+        quantreg::rq.fit(cbind(1, dmft_basis), dmft[dmft_fit_rows], tau = 0.5),
+        warning = function(w) if (grepl("nonunique", conditionMessage(w))) invokeRestart("muffleWarning"))
+      DMFT_AGE_FIT <- list(coefficients = unname(dmft_qfit$coefficients), df = DMFT_AGE_DF,
+                           knots = attr(dmft_basis, "knots"),
+                           boundary_knots = attr(dmft_basis, "Boundary.knots"), n = sum(dmft_fit_rows))
+      dmft_median_at <- function(a) drop(cbind(1, predict(dmft_basis, a)) %*% DMFT_AGE_FIT$coefficients)
+      # rounded so that subjects on the median line (DMFT equal to it) are LD,
+      # not split by floating-point error
+      dmft_has_age <- !is.na(dmft_age)
+      dmft_threshold[dmft_has_age] <- round(dmft_median_at(dmft_age[dmft_has_age]), 6)
+      DMFT_GROUP_TEXT <- sprintf(paste(
+        "> the median DMFT at the subject's age -> HD (high DMFT), otherwise LD",
+        "(median regression of DMFT on age, natural spline with %d df, analysed subjects)"), DMFT_AGE_DF)
+    }
+    n_no_age <- sum(in_pool & is.na(dmft_age))
+    if (n_no_age > 0) cat(sprintf("  %d subject(s) without %s get no group.\n", n_no_age, DMFT_AGE_COL))
+  }
+
+  data.df8_log2$DMFT_threshold <- dmft_threshold
+  data.df8_log2$condL <- ifelse(is.na(dmft) | is.na(dmft_threshold), NA_character_,
+                                ifelse(dmft <= dmft_threshold, "Low_DMFT", "High_DMFT"))
+  cat(sprintf("  DMFT: %s\n", DMFT_GROUP_TEXT))
   cat("  DMFT summary (analysed subjects):\n"); print(summary(dmft[in_pool]))
   cat("\n  DMFT value counts (analysed subjects):\n"); print(table(dmft[in_pool]))
+
+  if (DMFT_GROUPING != "cutoff") {
+    dmft_shown <- in_pool & !is.na(dmft_threshold)
+    dmft_hd    <- dmft[dmft_shown] > dmft_threshold[dmft_shown]
+    dmft_agegp <- cut(floor(dmft_age[dmft_shown]), breaks = c(-Inf, DMFT_NHANES$from[-1], Inf),
+                      right = FALSE, labels = DMFT_NHANES$label)
+    dmft_by_age <- do.call(rbind, lapply(levels(dmft_agegp), function(g) {
+      k <- which(dmft_agegp == g); t_k <- dmft_threshold[dmft_shown][k]
+      data.frame(Age = g, n = length(k),
+                 Threshold = if (length(k) == 0) "" else if (max(t_k) - min(t_k) < 0.05)
+                   sprintf("%.1f", t_k[1]) else sprintf("%.1f-%.1f", min(t_k), max(t_k)),
+                 Median_DMFT = if (length(k)) median(dmft[dmft_shown][k]) else NA,
+                 LD = sum(!dmft_hd[k]), HD = sum(dmft_hd[k]))
+    }))
+    cat("\n  By age group (analysed subjects):\n"); print(dmft_by_age, row.names = FALSE)
+    if (DMFT_GROUPING == "age_median") {
+      dmft_at <- unique(round(seq(min(dmft_age[dmft_fit_rows]), max(dmft_age[dmft_fit_rows]), length.out = 6)))
+      cat("  Fitted median DMFT at age ",
+          paste(sprintf("%g: %.1f", dmft_at, dmft_median_at(dmft_at)), collapse = " | "), "\n", sep = "")
+    }
+    cat(sprintf("  Median age: LD %.1f | HD %.1f\n",
+                median(dmft_age[dmft_shown][!dmft_hd]), median(dmft_age[dmft_shown][dmft_hd])))
+    dmft_med <- median(dmft[in_pool])
+    cat(sprintf("\n  These groups vs one cut-off at the median (DMFT <= %g -> LD):\n", dmft_med))
+    print(table(Median_cutoff = ifelse(dmft[dmft_shown] > dmft_med, "HD", "LD"),
+                Age_specific  = ifelse(dmft_hd, "HD", "LD")))
+  }
 
 } else {   # validation
 
@@ -1035,7 +1146,7 @@ if (PROJECT == "perio") {
   n_ld <- sum(data.dfPH$condL == "LD")
   cat(sprintf("\n  DMFT: HD = %d | LD = %d\n", n_hd, n_ld))
   if (min(n_hd, n_ld) == 0)
-    stop("One DMFT group is empty (HD = ", n_hd, ", LD = ", n_ld, "). Change DMFT_CUTOFF.")
+    stop("One DMFT group is empty (HD = ", n_hd, ", LD = ", n_ld, "). Change DMFT_CUTOFF or DMFT_GROUPING.")
   if (min(n_hd, n_ld) < 20)
     warning(sprintf("Smaller DMFT group has only %d subjects; 3-6 marker logistic models are unstable at this size.",
                     min(n_hd, n_ld)))
@@ -1254,8 +1365,7 @@ if (PROJECT == "perio") {
               PH_REF_LABEL,  sum(data.dfPH$condL == PH_REF_LABEL)))
 }
 if (PROJECT == "DMFT")
-  cat(sprintf("  DMFT cut-off: %g (%s)%s\n", DMFT_CUTOFF_USED,
-              if (is.null(DMFT_CUTOFF)) "median" else "DMFT_CUTOFF",
+  cat(sprintf("  DMFT groups (%s): %s%s\n", DMFT_GROUPING, DMFT_GROUP_TEXT,
               if (is.null(DMFT_PERIODONTAL_FILTER)) "" else
                 paste(" | original diagnosis kept:", paste(DMFT_PERIODONTAL_FILTER, collapse = ", "))))
 if (PROJECT == "validation")
@@ -1292,7 +1402,10 @@ caries_cutoff_key <- if (CONDL_SOURCE == "Caries") {
 } else ""
 
 dmft_key <- if (CONDL_SOURCE == "DMFT") {
-  paste0("_cutoff", DMFT_CUTOFF_USED, if (is.null(DMFT_CUTOFF)) "median" else "",
+  paste0(switch(DMFT_GROUPING,
+                cutoff     = paste0("_cutoff", DMFT_CUTOFF_USED, if (is.null(DMFT_CUTOFF)) "median" else ""),
+                age_nhanes = "_ageNHANES2017",
+                age_median = paste0("_ageMedianDf", DMFT_AGE_DF)),
          if (!is.null(DMFT_PERIODONTAL_FILTER))
            paste0("_periodontal_", paste(gsub("[^A-Za-z0-9]+", "", DMFT_PERIODONTAL_FILTER), collapse = "Plus"))
          else "")
@@ -1344,8 +1457,14 @@ biomarker_registry[[registry_key]] <- list(
     else "no_caries_vs_high_caries_experience"
   } else NULL,
   dmft_components      = if (CONDL_SOURCE == "DMFT") dmft_cols else NULL,
+  dmft_grouping        = if (CONDL_SOURCE == "DMFT") DMFT_GROUPING else NULL,
+  dmft_groups          = DMFT_GROUP_TEXT,
   dmft_cutoff          = DMFT_CUTOFF_USED,
-  dmft_cutoff_rule     = if (CONDL_SOURCE == "DMFT") { if (is.null(DMFT_CUTOFF)) "median" else "fixed" } else NULL,
+  dmft_cutoff_rule     = if (CONDL_SOURCE == "DMFT" && DMFT_GROUPING == "cutoff") {
+    if (is.null(DMFT_CUTOFF)) "median" else "fixed" } else NULL,
+  dmft_age_col         = if (CONDL_SOURCE == "DMFT" && DMFT_GROUPING != "cutoff") DMFT_AGE_COL else NULL,
+  dmft_nhanes          = if (CONDL_SOURCE == "DMFT" && DMFT_GROUPING == "age_nhanes") DMFT_NHANES else NULL,
+  dmft_age_fit         = DMFT_AGE_FIT,
   dmft_periodontal_filter = if (CONDL_SOURCE == "DMFT") DMFT_PERIODONTAL_FILTER else NULL,
   confounders          = confounders,
   dm_perio_definition  = if (DM_COMPARISON) DM_PERIO_DEFINITION else NULL,

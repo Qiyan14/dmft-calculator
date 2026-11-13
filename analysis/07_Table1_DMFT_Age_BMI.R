@@ -204,13 +204,17 @@ build_table1_dmft <- function(dataset) {
   cutoff <- if (exists("DMFT_CUTOFF_USED")) DMFT_CUTOFF_USED else NA_real_
   cut_rule <- if (!exists("DMFT_CUTOFF")) "rule unknown" else
     if (is.null(DMFT_CUTOFF)) "median of the analysed subjects" else "fixed"
-  if (!is.na(cutoff)) {
-    expect_HD <- df$DMFT_total > cutoff
+  ### DMFT: Script 1's DMFT_GROUPING; under the age rules each subject has its own
+  ### threshold (column DMFT_threshold) and DMFT_CUTOFF_USED is NA
+  grouping   <- get0("DMFT_GROUPING", ifnotfound = "cutoff")
+  group_text <- get0("DMFT_GROUP_TEXT")
+  thr <- if ("DMFT_threshold" %in% colnames(df)) as.numeric(df$DMFT_threshold) else rep(cutoff, nrow(df))
+  if (any(!is.na(thr))) {
+    expect_HD <- df$DMFT_total > thr
     n_mis <- sum(expect_HD != (df$condL == lev_HD), na.rm = TRUE)
     if (n_mis > 0)
-      warning(sprintf(paste0("%d subject(s) are in a different LD / HD group than DMFT <= %g implies. ",
-                             "Check that DMFT_COMPONENT_COLS are the columns Script 1 used."),
-                      n_mis, cutoff))
+      warning(sprintf(paste0("%d subject(s) are in a different LD / HD group than DMFT <= threshold implies. ",
+                             "Check that DMFT_COMPONENT_COLS are the columns Script 1 used."), n_mis))
   }
 
   # component labels: D / M / F when each column's role is clear from its name
@@ -438,7 +442,11 @@ build_table1_dmft <- function(dataset) {
              paste(DMFT_PERIODONTAL_FILTER, collapse = ", ") else "none"
   cat("\n===== Numbers for the manuscript =====\n")
   cat(sprintf("  N = %d | LD = %d | HD = %d\n", nrow(df), n_grp[[lev_LD]], n_grp[[lev_HD]]))
-  if (is.na(cutoff)) {
+  if (grouping != "cutoff" && !is.null(group_text)) {
+    cat(sprintf("  Groups: DMFT %s\n", group_text))
+    cat(sprintf("  Thresholds in this cohort: %.1f to %.1f (by age)\n",
+                min(thr, na.rm = TRUE), max(thr, na.rm = TRUE)))
+  } else if (is.na(cutoff)) {
     cat("  Cutoff: DMFT_CUTOFF_USED not found in this session\n")
   } else {
     cat(sprintf("  Cutoff: DMFT <= %s -> LD, > %s -> HD (%s)\n", format(cutoff), format(cutoff), cut_rule))
@@ -447,8 +455,9 @@ build_table1_dmft <- function(dataset) {
   cat(sprintf("  DMFT: median %.1f (Q1 %.1f, Q3 %.1f); mean %.2f (SD %.2f); range %g-%g; missing %d\n",
               q[2], q[1], q[3], mean(d, na.rm = TRUE), sd(d, na.rm = TRUE),
               min(d, na.rm = TRUE), max(d, na.rm = TRUE), sum(is.na(d))))
-  if (!is.na(cutoff))
-    cat(sprintf("  Subjects with DMFT equal to the cutoff (all in LD): %d\n", sum(d == cutoff, na.rm = TRUE)))
+  if (any(!is.na(thr)))
+    cat(sprintf("  Subjects with DMFT equal to the threshold (all in LD): %d\n",
+                sum(abs(d - thr) < 1e-8, na.rm = TRUE)))
   for (v in comp_vars)
     cat(sprintf("  %-18s HD subjects with 0: %d of %d\n", comp_labs[[v]],
                 sum(df[[v]][df$condL == lev_HD] == 0, na.rm = TRUE), n_grp[[lev_HD]]))
@@ -462,8 +471,11 @@ build_table1_dmft <- function(dataset) {
   # ------ export ------
   filt_tag  <- if (filt == "none") "allPerio" else
                  paste(gsub("[^A-Za-z0-9]+", "", DMFT_PERIODONTAL_FILTER), collapse = "Plus")
-  stem      <- sprintf("table1_DMFT_HD_vs_LD_cut%s_%s",
-                       if (is.na(cutoff)) "Unknown" else format(cutoff), filt_tag)
+  group_tag <- switch(grouping,
+                      age_nhanes = "ageNHANES2017",
+                      age_median = paste0("ageMedianDf", get0("DMFT_AGE_DF", ifnotfound = "")),
+                      paste0("cut", if (is.na(cutoff)) "Unknown" else format(cutoff)))
+  stem      <- sprintf("table1_DMFT_HD_vs_LD_%s_%s", group_tag, filt_tag)
   tex_file  <- paste0(stem, ".tex")
   docx_file <- paste0(stem, ".docx")
 
