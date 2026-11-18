@@ -19,7 +19,7 @@ stopifnot(is.character(e$APP_VERSION), nzchar(e$APP_VERSION))
 m0 <- e$PUBLISHED_MODEL
 stopifnot(e$model_ready(m0), nrow(m0$markers) == 1L, identical(m0$markers$key, 'Bacteroides_heparinolyticus'),
           identical(m0$covariates$var, c('Age_DOS','BMI')), all(m0$covariates$type == 'numeric'),
-          m0$transform == 'log2', m0$delta == 5e-7, abs(m0$threshold - 0.4135852879) < 1e-12)
+          m0$transform == 'log2', m0$delta == 5e-7, abs(m0$threshold - 0.4085328617) < 1e-12)
 # Published equation, written out independently of the app (from 04b's dmft_age_bmi_model.csv)
 published_eta <- function(x, age, bmi) {
  L <- log2(x + 5e-7)

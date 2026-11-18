@@ -30,7 +30,7 @@
 # Full-precision coefficients from the final fit (04b_Export_DMFT_Equation_Single_Biomarker.R).
 # ==========================================================================
 
-APP_VERSION <- "7.0 (age + BMI)"
+APP_VERSION <- "7.1 (age + BMI)"
 
 suppressPackageStartupMessages(library(shiny))
 HAS_READXL  <- requireNamespace("readxl", quietly = TRUE)
@@ -52,7 +52,7 @@ MINUS <- "−"
 PUBLISHED_MODEL <- list(
   source = "published", name = "Study DMFT model, trained on the 111 study participants",
   description = "One salivary biomarker with age and BMI (logistic regression).",
-  case_label = "high DMFT (DMFT > 13)", ref_label = "low DMFT (DMFT ≤ 13)",
+  case_label = "high DMFT (DMFT > 13.9)", ref_label = "low DMFT (DMFT ≤ 13.9)",
   case_short = "HD", ref_short = "LD", transform = "log2", delta = 5e-7,
   analysis_configuration = "Biomarkers_Age_BMI", search_design = "exhaustive12_beam3",
   intercept = -23.0058981831817,
@@ -63,13 +63,13 @@ PUBLISHED_MODEL <- list(
     abbr = c("Age", "BMI"), label = c("Age", "Body mass index"), unit = c("years", "kg/m²"),
     type = c("numeric", "numeric"), level = c(NA_character_, NA_character_),
     coef = c(0.100689075458851, 0.052697388841799), stringsAsFactors = FALSE),
-  cov_levels = list(), level_labels = list(), threshold = 0.4135852879,
-  cohort = "111 adults: 56 with DMFT ≤ 13 and 55 with DMFT > 13.",
-  performance = c("Balanced accuracy" = 0.8066071429, "Sensitivity" = 0.84,
-                  "Specificity" = 0.7732142857, "AUC" = 0.8392012987),
-  performance_note = paste("Five-fold cross-validation repeated 10 times. Panel and threshold selection used these",
+  cov_levels = list(), level_labels = list(), threshold = 0.4085328617,
+  cohort = "111 adults: 56 with DMFT ≤ 13.9 and 55 with DMFT > 13.9.",
+  performance = c("Balanced accuracy" = 0.8201623377, "Sensitivity" = 0.8581818182,
+                  "Specificity" = 0.7821428571, "AUC" = 0.8329610390),
+  performance_note = paste("Five-fold cross-validation repeated 5 times. Panel and threshold selection used these",
     "predictions, so development performance may be optimistic; when the selection was repeated within each training set",
-    "(nested cross-validation), balanced accuracy was 75.7%. Not externally validated."),
+    "(nested cross-validation), balanced accuracy was 79.3%. Not externally validated."),
   caution = paste("Development model; the *Bacteroides heparinolyticus* coefficient is imprecise, and independent validation",
     "is required. Age is in years and BMI in kg/m².")
 )
@@ -1157,7 +1157,7 @@ start_tab <- tabPanel(
     column(6, div(class = "card",
       h3("Calculate a patient's risk"),
       p(class = "lead-muted", "Enter the absolute raw concentration of one salivary biomarker with age and BMI to estimate the",
-        "risk of high DMFT (DMFT > 13) with the study model, or with a model trained on your own data."),
+        "risk of high DMFT (DMFT > 13.9) with the study model, or with a model trained on your own data."),
       actionButton("go_predict", "Go to Risk Calculator", class = "btn-accent")))
   ),
   fluidRow(column(12, p(class = "footer-note",
@@ -1786,7 +1786,7 @@ server <- function(input, output, session) {
                                               collapse = ", ")
     tagList(
       p(m$cohort),
-      if (identical(m$source, "published")) p("Risk means the estimated likelihood of having high DMFT at assessment (DMFT > 13); it does not predict future disease."),
+      if (identical(m$source, "published")) p("Risk means the estimated likelihood of having high DMFT at assessment (DMFT > 13.9); it does not predict future disease."),
       if (!is.null(perf)) p(sprintf("Cross-validated performance at the %s threshold: %s.", fmt_pct(m$threshold), perf),
                             span(class = "help-note", m$performance_note)),
       if (!is.null(m$caution)) p(HTML(md_html(m$caution))),
