@@ -236,9 +236,10 @@ if (PROJECT == "caries") {
 
   info <- list(project = PROJECT, condl_source = CONDL_SOURCE, rows = c(
     "DMFT"               = paste(dmft_cols, collapse = " + "),
-    "DMFT cut-off"       = sprintf("<= %g -> LD (low DMFT) | > %g -> HD (high DMFT) (%s)",
-                                   DMFT_CUTOFF_USED, DMFT_CUTOFF_USED,
-                                   if (is.null(DMFT_CUTOFF)) "median of the analysed subjects" else "fixed"),
+    "DMFT groups"        = if (!is.null(get0("DMFT_GROUP_TEXT"))) DMFT_GROUP_TEXT else
+                             sprintf("<= %g -> LD (low DMFT) | > %g -> HD (high DMFT) (%s)",
+                                     DMFT_CUTOFF_USED, DMFT_CUTOFF_USED,
+                                     if (is.null(DMFT_CUTOFF)) "median of the analysed subjects" else "fixed"),
     "Periodontal filter" = if (is.null(DMFT_PERIODONTAL_FILTER)) "none"
                            else paste(DMFT_PERIODONTAL_FILTER, collapse = ", ")))
   SPECS <- list(make_spec("HD_vs_LD", data.dfPH, biomarkers_PH_vif, stats_PH_vif,
