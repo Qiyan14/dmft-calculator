@@ -15,44 +15,45 @@ load_functions <- function(path) {
 e <- load_functions(app_path)
 stopifnot(is.character(e$APP_VERSION), nzchar(e$APP_VERSION))
 
-# ---- bundled study model: one biomarker (Bacteroides heparinolyticus) + age + BMI -------
+# ---- bundled study model: one biomarker (Bacteroides heparinolyticus) + age -------------
 m0 <- e$PUBLISHED_MODEL
 stopifnot(e$model_ready(m0), nrow(m0$markers) == 1L, identical(m0$markers$key, 'Bacteroides_heparinolyticus'),
-          identical(m0$covariates$var, c('Age_DOS','BMI')), all(m0$covariates$type == 'numeric'),
-          m0$transform == 'log2', m0$delta == 5e-7, abs(m0$threshold - 0.4085328617) < 1e-12)
-# Published equation, written out independently of the app (from 04b's dmft_age_bmi_model.csv)
-published_eta <- function(x, age, bmi) {
+          identical(m0$covariates$var, 'Age_DOS'), all(m0$covariates$type == 'numeric'),
+          m0$transform == 'log2', m0$delta == 5e-7, abs(m0$threshold - 0.3834346393) < 1e-12)
+# Published equation, written out independently of the app (from 04b's dmft_age_model.csv)
+published_eta <- function(x, age) {
  L <- log2(x + 5e-7)
- -23.0058981831817 - 0.846102247378536*L[1] + 0.100689075458851*age + 0.052697388841799*bmi
+ -21.4861170069685 - 0.842187455616679*L[1] + 0.10224870924323*age
 }
 # The biomarker slope equals log(OR per doubling) in the results workbook (Results_1_Biomarkers, top row)
-or_doubling <- 0.4290841406
+or_doubling <- 0.4307672079
 stopifnot(max(abs(m0$markers$coef - log(or_doubling))) < 1e-9)
 set.seed(20261030); worst <- 0
 for (i in 1:10000) {
  x <- ifelse(runif(1) < 0.3, 0, exp(runif(1, log(1e-6), log(1e3))))   # about 30% zeros (not detected)
- age <- runif(1, 18, 100); bmi <- runif(1, 12, 70)
- pr <- e$predict_model(m0, x, list(Age_DOS = age, BMI = bmi))
- worst <- max(worst, abs(pr$eta - published_eta(x, age, bmi)))
- stopifnot(abs(pr$p - plogis(published_eta(x, age, bmi))) < 1e-12)
+ age <- runif(1, 18, 100)
+ pr <- e$predict_model(m0, x, list(Age_DOS = age))
+ worst <- max(worst, abs(pr$eta - published_eta(x, age)))
+ stopifnot(abs(pr$p - plogis(published_eta(x, age))) < 1e-12)
 }
 stopifnot(worst < 1e-13)
 cat(sprintf('PASS: bundled model matches the published equation for 10,000 random inputs (largest difference %.1e).\n', worst))
 # Saved and reloaded model gives identical predictions
 tab0 <- e$model_to_table(m0)
-m1 <- e$model_from_table(tab0, 'selected.csv'); m2 <- e$selected_age_bmi_model(tab0)
-x <- 3.5; cv <- list(Age_DOS = 52, BMI = 31.4)
+m1 <- e$model_from_table(tab0, 'selected.csv'); m2 <- e$selected_study_model(tab0)
+x <- 3.5; cv <- list(Age_DOS = 52)
 stopifnot(identical(e$predict_model(m1, x, cv)$p, e$predict_model(m0, x, cv)$p),
           identical(e$predict_model(m2, x, cv)$p, e$predict_model(m0, x, cv)$p))
 # Desktop loader: the matching export is accepted, anything else is refused and the bundle kept
 dd <- tempfile(); dir.create(dd)
-write.csv(tab0, file.path(dd, 'dmft_age_bmi_model.csv'), row.names = FALSE, na = '')
+write.csv(tab0, file.path(dd, 'dmft_age_model.csv'), row.names = FALSE, na = '')
 r <- e$load_published_coefficients(m0, dd)
 stopifnot(grepl('matches', r$msg), abs(e$predict_model(r$model, x, cv)$p - e$predict_model(m0, x, cv)$p) < 1e-12,
           identical(r$model$performance, m0$performance))   # CSV keeps 15 significant digits
 # Example values shown by "Fill example values" and in the manuscript (not a participant)
-ex <- e$predict_model(m0, e$EXAMPLE$markers, list(Age_DOS = e$EXAMPLE$covariates[1], BMI = e$EXAMPLE$covariates[2]))
-stopifnot(abs(ex$p - plogis(published_eta(e$EXAMPLE$markers, 40, 25))) < 1e-12, round(100 * ex$p, 1) == 51.2,
+ex <- e$predict_model(m0, e$EXAMPLE$markers, list(Age_DOS = e$EXAMPLE$covariates[1]))
+stopifnot(length(e$EXAMPLE$covariates) == 1L, abs(ex$p - plogis(published_eta(e$EXAMPLE$markers, 40))) < 1e-12,
+          round(100 * ex$p, 1) == 55.8,
           ex$p >= m0$threshold)
 cat(sprintf('PASS: save/reload, desktop export check and example (%.1f%%, above the %.1f%% threshold).\n',
             100 * ex$p, 100 * m0$threshold))
@@ -97,15 +98,16 @@ d <- rbind(d,d[1,]);d$BMI[n+1]<-NA
 b <- q$export_dmft_equation(d,ref,key,output_dir=out,results_file=fakefile)
 stopifnot(length(b$source_rows)==n,b$selected_result$k==3L,b$max_link_difference<1e-8)
 tab <- read.csv(file.path(out,'dmft_age_bmi_model.csv'),stringsAsFactors=FALSE)
-m <- e$selected_age_bmi_model(tab)
+m <- e$selected_study_model(tab)
 for(i in 1:n)stopifnot(abs(e$predict_model(m,raw[i,1:3],list(Age_DOS=d$Age_DOS[i],BMI=d$BMI[i]))$p-predict(f,type='response')[i])<1e-10)
 # A different model placed next to the desktop app is refused; the bundled model stays in use
+stopifnot(file.copy(file.path(out,'dmft_age_bmi_model.csv'), file.path(out,'dmft_age_model.csv')))
 r <- e$load_published_coefficients(m0,out)
 stopifnot(grepl('was not used', r$msg), identical(r$model$markers$key, m0$markers$key), e$model_ready(r$model))
-m2<-e$selected_age_bmi_model(e$model_to_table(m));stopifnot(e$model_ready(m2))
+m2<-e$selected_study_model(e$model_to_table(m));stopifnot(e$model_ready(m2))
 bad<-tab;bad$Label[bad$Term=='(Model configuration)']<-'Biomarkers_Age_Sex'
-stopifnot(inherits(try(e$selected_age_bmi_model(bad),silent=TRUE),'try-error'))
-bad<-tab[tab$Term!='(Threshold)',];stopifnot(inherits(try(e$selected_age_bmi_model(bad),silent=TRUE),'try-error'))
+stopifnot(inherits(try(e$selected_study_model(bad),silent=TRUE),'try-error'))
+bad<-tab[tab$Term!='(Threshold)',];stopifnot(inherits(try(e$selected_study_model(bad),silent=TRUE),'try-error'))
 wb$parameters$Value[trimws(wb$parameters$Parameter)=='k = 2 search']<-'beam'
 stopifnot(inherits(try(q$select_dmft_panel(list(wb),key),silent=TRUE),'try-error'))
 cat('PASS: export script, raw-input equivalence for 120 synthetic participants, import and stale-model rejection.\n')
