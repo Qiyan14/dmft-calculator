@@ -8,7 +8,7 @@
 #      groups, search logistic regression panels with repeated cross-validation,
 #      train a model from any panel and download the results.
 #   2. Patient prediction - enter absolute raw concentration values to estimate
-#      the risk of high DMFT with the selected age/BMI model, or
+#      the risk of high DMFT with the study model (one biomarker with age), or
 #      with a model trained in task 1 (or loaded from a saved model file).
 #      The page shows the equation with its coefficients, the calculation for
 #      the values entered and a speedometer gauge of the estimate.
@@ -18,19 +18,19 @@
 #        without them, upload and download CSV files.
 #
 # Two versions are built from this file:
-#   Desktop - this file, run in a local R session. A dmft_age_bmi_model.csv
+#   Desktop - this file, run in a local R session. A dmft_age_model.csv
 #             (exported by 04b_Export_DMFT_Equation_Single_Biomarker.R) placed next
 #             to it is used only if it matches the bundled coefficients (checks below).
 #   Browser - app/app.R in the dmft-calculator repository: this file with the
 #             bundled coefficients only (see the PUB line in section 11),
 #             compiled by build.R with Shinylive to run R in the browser (webR).
 #
-# Study model: one biomarker (Bacteroides heparinolyticus) + age + BMI, the panel size that
+# Study model: one biomarker (Bacteroides heparinolyticus) + age, the panel size that
 # generalized best under nested cross-validation (search: exhaustive sizes 1–2, beam from 3).
 # Full-precision coefficients from the final fit (04b_Export_DMFT_Equation_Single_Biomarker.R).
 # ==========================================================================
 
-APP_VERSION <- "7.1 (age + BMI)"
+APP_VERSION <- "8.0 (age)"
 
 suppressPackageStartupMessages(library(shiny))
 HAS_READXL  <- requireNamespace("readxl", quietly = TRUE)
@@ -45,33 +45,33 @@ MINUS <- "−"
 # 1) THE PUBLISHED MODEL
 # ==========================================================================
 # Raw-input form: logit p(HD) = intercept + sum_j coef_j * log2(x_j + delta)
-#                               + coef_age * Age + coef_bmi * BMI
+#                               + coef_age * Age
 # (the log2 transform is applied to the raw value; the LD-group centring and
 # scaling used in fitting are absorbed into the intercept and slopes).
 
 PUBLISHED_MODEL <- list(
   source = "published", name = "Study DMFT model, trained on the 111 study participants",
-  description = "One salivary biomarker with age and BMI (logistic regression).",
+  description = "One salivary biomarker with age (logistic regression).",
   case_label = "high DMFT (DMFT > 13.9)", ref_label = "low DMFT (DMFT ≤ 13.9)",
   case_short = "HD", ref_short = "LD", transform = "log2", delta = 5e-7,
-  analysis_configuration = "Biomarkers_Age_BMI", search_design = "exhaustive12_beam3",
-  intercept = -23.0058981831817,
+  analysis_configuration = "Biomarkers_Age", search_design = "exhaustive12_beam3",
+  intercept = -21.4861170069685,
   markers = data.frame(
     key = "Bacteroides_heparinolyticus", abbr = "BH", label = "*Bacteroides heparinolyticus*",
-    coef = -0.846102247378536, stringsAsFactors = FALSE),
-  covariates = data.frame(var = c("Age_DOS", "BMI"), term = c("Age_DOS", "BMI"),
-    abbr = c("Age", "BMI"), label = c("Age", "Body mass index"), unit = c("years", "kg/m²"),
-    type = c("numeric", "numeric"), level = c(NA_character_, NA_character_),
-    coef = c(0.100689075458851, 0.052697388841799), stringsAsFactors = FALSE),
-  cov_levels = list(), level_labels = list(), threshold = 0.4085328617,
+    coef = -0.842187455616679, stringsAsFactors = FALSE),
+  covariates = data.frame(var = "Age_DOS", term = "Age_DOS",
+    abbr = "Age", label = "Age", unit = "years",
+    type = "numeric", level = NA_character_,
+    coef = 0.10224870924323, stringsAsFactors = FALSE),
+  cov_levels = list(), level_labels = list(), threshold = 0.3834346393,
   cohort = "111 adults: 56 with DMFT ≤ 13.9 and 55 with DMFT > 13.9.",
-  performance = c("Balanced accuracy" = 0.8201623377, "Sensitivity" = 0.8581818182,
-                  "Specificity" = 0.7821428571, "AUC" = 0.8329610390),
+  performance = c("Balanced accuracy" = 0.8329220779, "Sensitivity" = 0.8872727273,
+                  "Specificity" = 0.7785714286, "AUC" = 0.8400064935),
   performance_note = paste("Five-fold cross-validation repeated 5 times. Panel and threshold selection used these",
     "predictions, so development performance may be optimistic; when the selection was repeated within each training set",
-    "(nested cross-validation), balanced accuracy was 79.3%. Not externally validated."),
+    "(nested cross-validation), balanced accuracy was 82.0%. Not externally validated."),
   caution = paste("Development model; the *Bacteroides heparinolyticus* coefficient is imprecise, and independent validation",
-    "is required. Age is in years and BMI in kg/m².")
+    "is required. Age is in years.")
 )
 
 # Display label of a factor level (the level itself when the model has no labels)
@@ -83,54 +83,58 @@ level_label <- function(m, v, lev) {
 # Choices for a factor input: values are the model's levels, names their labels
 level_choices <- function(m, v, lv) stats::setNames(lv, level_label(m, v, lv))
 
-EXAMPLE <- list(markers = c(0), covariates = c(40, 25))   # illustrative, not a participant
+EXAMPLE <- list(markers = c(0), covariates = c(40))   # illustrative, not a participant
 
 model_ready <- function(m) {
   !is.null(m) && nrow(m$markers) > 0L && is.finite(m$threshold) && is.finite(m$intercept) && all(is.finite(m$markers$coef)) &&
     (nrow(m$covariates) == 0 || all(is.finite(m$covariates$coef)))
 }
 
-# Load only an explicitly named, complete model export; never reuse a legacy file.
-selected_age_bmi_model <- function(tab, filename = "dmft_age_bmi_model.csv") {
+# Load only an explicitly named, complete model export of a study configuration (04b's
+# dmft_age_model.csv for age, dmft_age_bmi_model.csv for age and BMI); never reuse a legacy file.
+selected_study_model <- function(tab, filename = "dmft_age_model.csv") {
+  configs <- list(Biomarkers_Age = "Age_DOS", Biomarkers_Age_BMI = c("Age_DOS", "BMI"))   # study covariate sets
   m <- model_from_table(tab, filename)
   meta <- function(key) tab$Label[tab$Term == key]
+  config <- meta("(Model configuration)")
   if (sum(tab$Term == "(Threshold)") != 1L ||
       !is.finite(as.numeric(tab$Coefficient_raw_input[tab$Term == "(Threshold)"])) ||
       m$threshold <= 0 || m$threshold >= 1 ||
-      !model_ready(m) || !setequal(unique(m$covariates$var), c("Age_DOS","BMI")) ||
+      length(config) != 1L || !config %in% names(configs) ||
+      !model_ready(m) || !setequal(unique(m$covariates$var), configs[[config]]) ||
       !all(m$covariates$type == "numeric") || m$transform != "log2" ||
       abs(m$delta - 5e-7) > 1e-15 ||
-      !identical(meta("(Model configuration)"), "Biomarkers_Age_BMI") ||
       !identical(meta("(Search design)"), "exhaustive12_beam3"))
-    stop("Use dmft_age_bmi_model.csv exported after the new age/BMI search (exhaustive sizes 1–2, beam from 3).")
-  m$analysis_configuration <- "Biomarkers_Age_BMI"; m$search_design <- "exhaustive12_beam3"
+    stop("Use the dmft_age_model.csv exported by 04b_Export_DMFT_Equation_Single_Biomarker.R after the study search (exhaustive sizes 1–2, beam from 3).")
+  m$analysis_configuration <- config; m$search_design <- "exhaustive12_beam3"
   m$source <- "published"; m$name <- "Study DMFT model, trained on the 111 study participants"
-  m$description <- sprintf("%d salivary biomarkers with age and BMI.", nrow(m$markers))
+  m$description <- sprintf("%d salivary biomarker%s with %s.", nrow(m$markers), if (nrow(m$markers) == 1L) "" else "s",
+                           if ("BMI" %in% m$covariates$var) "age and BMI" else "age")
   m$covariates$label <- ifelse(m$covariates$var=="BMI","Body mass index","Age")
   m$covariates$unit <- ifelse(m$covariates$var=="BMI","kg/m²","years")
   m$cohort <- "See the rerun analysis workbook for cohort size and cross-validated performance."
   m$caution <- "Development model; independent validation is required."
   m
 }
-# Desktop only: a dmft_age_bmi_model.csv next to the app is used if it is the bundled model
-# (same biomarkers, coefficients and threshold); anything else is refused, and the bundled model
-# stays in use. Load other models with "Saved model".
+# Desktop only: a dmft_age_model.csv next to the app is used if it is the bundled model
+# (same biomarkers, covariates, coefficients and threshold); anything else is refused, and the
+# bundled model stays in use. Load other models with "Saved model".
 load_published_coefficients <- function(model, dir = getwd()) {
-  f <- file.path(dir, "dmft_age_bmi_model.csv")
+  f <- file.path(dir, "dmft_age_model.csv")
   if (!file.exists(f)) return(list(model = model, msg = NULL))
   tryCatch({
-    m <- selected_age_bmi_model(utils::read.csv(f, stringsAsFactors = FALSE, check.names = FALSE), basename(f))
+    m <- selected_study_model(utils::read.csv(f, stringsAsFactors = FALSE, check.names = FALSE), basename(f))
     i <- match(model$markers$key, m$markers$key)
     k <- match(model$covariates$var, m$covariates$var)
-    if (nrow(m$markers) != nrow(model$markers) || anyNA(i) || anyNA(k) ||
+    if (nrow(m$markers) != nrow(model$markers) || nrow(m$covariates) != nrow(model$covariates) || anyNA(i) || anyNA(k) ||
         max(abs(m$markers$coef[i] - model$markers$coef), abs(m$covariates$coef[k] - model$covariates$coef),
             abs(m$intercept - model$intercept)) > 1e-9 || abs(m$threshold - model$threshold) > 1e-8)
       stop("it is not the bundled study model; load it with \"Saved model\" instead.")
     out <- model
     out$markers$coef <- m$markers$coef[i]; out$covariates$coef <- m$covariates$coef[k]
     out$intercept <- m$intercept; out$threshold <- m$threshold
-    list(model = out, msg = "dmft_age_bmi_model.csv matches the bundled coefficients.")
-  }, error = function(e) list(model = model, msg = paste("dmft_age_bmi_model.csv was not used:", conditionMessage(e))))
+    list(model = out, msg = "dmft_age_model.csv matches the bundled coefficients.")
+  }, error = function(e) list(model = model, msg = paste("dmft_age_model.csv was not used:", conditionMessage(e))))
 }
 
 # ==========================================================================
@@ -1156,7 +1160,7 @@ start_tab <- tabPanel(
       actionButton("go_analysis", "Go to Train Your Own Data", class = "btn-accent"))),
     column(6, div(class = "card",
       h3("Calculate a patient's risk"),
-      p(class = "lead-muted", "Enter the absolute raw concentration of one salivary biomarker with age and BMI to estimate the",
+      p(class = "lead-muted", "Enter the absolute raw concentration of one salivary biomarker with age to estimate the",
         "risk of high DMFT (DMFT > 13.9) with the study model, or with a model trained on your own data."),
       actionButton("go_predict", "Go to Risk Calculator", class = "btn-accent")))
   ),
@@ -1285,7 +1289,7 @@ ui <- tagList(
 # 11) SERVER
 # ==========================================================================
 
-PUB <- load_published_coefficients(PUBLISHED_MODEL)  # Desktop version: a matching dmft_age_bmi_model.csv beside the app is checked
+PUB <- load_published_coefficients(PUBLISHED_MODEL)  # Desktop version: a matching dmft_age_model.csv beside the app is checked
 
 server <- function(input, output, session) {
 
@@ -1692,7 +1696,6 @@ server <- function(input, output, session) {
     for (i in seq_along(unique(m$covariates$var))) {
       v <- unique(m$covariates$var)[i]
       if (is_age_variable(v)) updateSliderInput(session, paste0("cv_", i), value = EXAMPLE$covariates[1])
-      if (v == "BMI") updateNumericInput(session, paste0("cv_", i), value = EXAMPLE$covariates[2])
     }
     rv$last_pred <- NULL
     showNotification("Illustrative values filled in (not a real participant). Click Calculate risk.",

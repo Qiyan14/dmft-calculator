@@ -9,10 +9,10 @@ GitHub Pages serves `docs/` on the main branch at https://qiyan14.github.io/dmft
 
 For new runtime dependencies or a new Shinylive version, use `build.R`; then restore the versioned app request in `docs/index.html` and run `update_app_source.R`.
 
-## Age/BMI model status
+## Study model status
 
-The study uses numeric age and BMI with exhaustive single-marker and pair searches and beam search from size three. The single-biomarker study model (*Bacteroides heparinolyticus* with age and BMI) is bundled in `PUBLISHED_MODEL` (section 1 of `app/app.R`) with the full-precision coefficients exported by `analysis/04b_Export_DMFT_Equation_Single_Biomarker.R` (`dmft_age_bmi_model.csv`), the workbook threshold 0.4085328617, and the cohort and cross-validated performance from the results workbook (five-fold cross-validation repeated 5 times; high DMFT is DMFT > 13.9). Its biomarker slope equals the logarithm of the workbook's per-doubling odds ratio to within 10⁻⁹, which the test checks.
+The study searches use exhaustive single-marker and pair searches and beam search from size three, with numeric age as the covariate (and with age and BMI for comparison). The single-biomarker study model (*Bacteroides heparinolyticus* with age) is bundled in `PUBLISHED_MODEL` (section 1 of `app/app.R`) with the full-precision coefficients exported by `04b_Export_DMFT_Equation_Single_Biomarker.R` (`dmft_age_model.csv`), the workbook threshold 0.3834346393, and the cohort and cross-validated performance from the Biomarkers_Age results workbook (five-fold cross-validation repeated 5 times; high DMFT is DMFT > 13.9). Its biomarker slope equals the logarithm of the workbook's per-doubling odds ratio to within 10⁻⁹, which the test checks.
 
 If the model is refitted, replace the bundled coefficients, threshold, cohort and performance together, then update the published equation in `tests/test_selected_model.R` and rerun the test.
 
-The desktop app `analysis/06_Shiny_DMFT_Age_BMI.R` is `app/app.R` with one difference: it checks a `dmft_age_bmi_model.csv` in its working directory and uses it only when it matches the bundled model. Other models are loaded with **Saved model**.
+The desktop app `analysis/06_Shiny_DMFT_Age_BMI.R` is `app/app.R` with one difference: it checks a `dmft_age_model.csv` in its working directory and uses it only when it matches the bundled model. Other models are loaded with **Saved model**.
