@@ -2,15 +2,13 @@
 
 [Open the calculator](https://qiyan14.github.io/dmft-calculator/)
 
-The latest figure, equation and calibration scripts read the new age/BMI summary workbook. See [analysis/README.md](analysis/README.md) for the revised run order and the added held-out permutation-importance figure.
+**Model status:** the calculator bundles the single-biomarker study model, *Bacteroides heparinolyticus* (BH) with age in years, with the full-precision coefficients of its final fit to the 111 study participants (`dmft_age_model.csv`). Under repeated cross-validation, balanced accuracy rose with each added biomarker, but when panel selection was repeated within each training set (nested cross-validation), the best single biomarker generalized better (balanced accuracy 82.0% versus 70.4% to 78.4% with two to five biomarkers) and had a higher balanced accuracy than age alone (78.4%) and than lasso, elastic-net and random forest models that used more biomarkers (66.6% to 77.5%). The classification threshold is 0.3834346393. In the development cohort (111 adults: 56 with DMFT ≤ 13.9 and 55 with DMFT > 13.9), five-fold cross-validation repeated 5 times gave balanced accuracy 83.29%, sensitivity 88.73%, specificity 77.86% and AUC 0.840. Panel and threshold selection used these predictions, so this performance is optimistic; independent validation is required.
 
-**Model status:** the calculator bundles the single-biomarker study model, *Bacteroides heparinolyticus* (BH) with age in years, with the full-precision coefficients of the final fit exported by `04b_Export_DMFT_Equation_Single_Biomarker.R` (`dmft_age_model.csv`). Under repeated cross-validation, balanced accuracy rose with each added biomarker, but when panel selection was repeated within each training set (nested cross-validation), the best single biomarker generalized better (balanced accuracy 82.0% versus 71.2% with four biomarkers) and had a higher balanced accuracy than lasso, elastic-net and random forest models that used more biomarkers. Adding BMI lowered its balanced accuracy, so BMI is not an input. The classification threshold is 0.3834346393. In the development cohort (111 adults: 56 with DMFT ≤ 13.9 and 55 with DMFT > 13.9), five-fold cross-validation repeated 5 times gave balanced accuracy 83.29%, sensitivity 88.73%, specificity 77.86% and AUC 0.840. Panel and threshold selection used these predictions, so this performance is optimistic; independent validation is required.
+Every study panel is a logistic regression of one to five biomarkers together with age in years; BMI and sex are not covariates. The search scored every single biomarker and all 111,156 pairs of the 472 candidates, then built larger panels by beam search, adding each remaining biomarker to each of the 50 highest-ranked panels of the preceding size; it does not evaluate every possible panel of three or more biomarkers. Panels were capped at five biomarkers so that, with age, a model has at most six predictors.
 
-This version adjusts every study biomarker panel for **Age_DOS and BMI**, both continuous in their original units. Sex is no longer a model covariate or a complete-case eligibility requirement. Table 1 can still describe sex and other participant characteristics.
+The scripts in `analysis/` are a version of this analysis that adjusts every panel for both age and BMI (outputs tagged `Biomarkers_Age_BMI`) and extends the beam search to six biomarkers; [analysis/README.md](analysis/README.md) describes them. The calculator's model came from the search with age as the only covariate (`Biomarkers_Age`).
 
-The study search evaluates every single biomarker and every pair, then uses beam search from three through six biomarkers. With 472 candidates there are 111,156 pairs. Beam search extends retained panels at the preceding size; it does not evaluate all possible panels of size three or larger. The existing sweep, finalist scoring, cross-validation settings, ranking, and repeat-percentile outputs are preserved. Runtime increases because every pair is evaluated.
-
-## Run the study analysis
+## Run the analysis scripts
 
 Use a fresh R session. Unzip these files into one folder. In `01_Preprocessing_DMFT_Age_BMI.R`, set `DATA_DIR_CHOICES` to the directory containing your three source Excel files and check the input filenames/sheets. The script retains your existing `Shared with Qi` output directory; ensure that directory exists. The default all-biomarker DMFT analysis does not need `script1_panels.R`; that file is required only if you change to selected/publication panels.
 
@@ -20,7 +18,7 @@ Run these scripts in the same session using their full paths (preprocessing chan
 2. `02_LogReg_DMFT_Age_BMI.R`: adjusted panel search; saves the workbook and exact resampling indices.
 3. `03_Figures_DMFT_Age_BMI.R`: selects the best panel at each size, reproduces out-of-fold predictions and checks them against the workbook; writes ROC, radar, heatmap, performance plots and the selected-model CSV.
 4. `04_Export_DMFT_Equation_Age_BMI.R`: selects the best overall panel from the exported Excel workbook by balanced accuracy, then AUC, with smaller panels breaking exact ties. Refits using matching preprocessed participant data and writes the full-precision risk equation and `dmft_age_bmi_model.csv`.
-   `04b_Export_DMFT_Equation_Single_Biomarker.R` does the same for the best single-biomarker panel (the calculator's model): it checks the refit against the workbook and also writes the `PUBLISHED_MODEL` block for `app/app.R`.
+   `04b_Export_DMFT_Equation_Single_Biomarker.R` does the same for the best single-biomarker panel: it checks the refit against the workbook and also writes a `PUBLISHED_MODEL` block for `app/app.R`.
 5. `05_Calibration_DMFT_Age_BMI.R`: calibration plots, Brier score and participant-bootstrap intervals from the new out-of-fold predictions.
 6. `07_Table1_DMFT_Age_BMI.R`: descriptive table for the same age/BMI complete-case cohort. Smoking and diabetes rows remain excluded.
 
@@ -44,7 +42,7 @@ Cross-validation after panel and threshold selection is developmental performanc
 
 ## Repository paths
 
-The numbered study scripts are in `analysis/`; the website source is `app/app.R`. `docs/app.json` contains the matching browser app. The previous figure and calibration filenames are retained as compatible copies of the new code.
+The numbered analysis scripts are in `analysis/`; the website source is `app/app.R`. `docs/app.json` contains the matching browser app. The previous figure and calibration filenames are retained as compatible copies of the new code.
 
 Run the browser-source checks from the repository root with:
 
