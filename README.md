@@ -17,7 +17,7 @@ The participant data are not in this repository. Use a fresh R session and run t
 3. `09_Nested_CV_DMFT.V8.R`: nested cross-validation of each panel size, age alone, lasso, elastic net and random forest.
 4. `04b_Export_DMFT_Equation_Single_Biomarker.V9.R`: the calculator's equation, `dmft_age_model.csv` and a `PUBLISHED_MODEL` block for `app/app.R`.
 5. `05b_Calibration_10rep_DMFT.V11.R`: calibration under repeated cross-validation.
-6. `05c_Calibration_Repeated_Nested_DMFT.V15.R`: ROC curves and calibration under repeated and nested cross-validation.
+6. `05c_Calibration_Repeated_Nested_DMFT.V16.R`: ROC curves and calibration under repeated and nested cross-validation.
 7. `07_Table1_DMFT_Age_BMI.R`: descriptive statistics of the cohort, at any point after script 01.
 
 ## Shiny calculator

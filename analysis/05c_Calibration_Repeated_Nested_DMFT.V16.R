@@ -1,12 +1,12 @@
 # ==========================================================================
 # ROC CURVES AND CALIBRATION UNDER REPEATED AND NESTED CROSS-VALIDATION,
 # EACH WITH ITS OWN BEST PANEL (one covariate set: NESTED_SET)
-# 05c_Calibration_Repeated_Nested_DMFT.V15.R
+# 05c_Calibration_Repeated_Nested_DMFT.V16.R
 # ==========================================================================
 # Run after scripts 05b and 09, in the same working directory (and, ideally,
 # the same R session):
 #
-#   source("05c_Calibration_Repeated_Nested_DMFT.V15.R")
+#   source("05c_Calibration_Repeated_Nested_DMFT.V16.R")
 #
 # V10: new setting MAX_PANEL_SIZE (section 1). Set to 4, the figures and the
 # choice of the best panel use panels of 1 to 4 biomarkers only, as in the
@@ -36,6 +36,10 @@
 # the metrics file still gives the intervals. TRUE draws V13's panels.
 # V15: MAX_PANEL_SIZE defaults to 5 (the manuscript reports panels of one to
 # five biomarkers with age); outputs end in _max5.
+# V16: one row per analysis: Figure_ROC_Calibration_nested and
+# Figure_ROC_Calibration_repeated put the ROC curves (A) beside the calibration
+# of that analysis's best panel (B), with its prediction histogram below it
+# (the manuscript's Figure 1 and Supplementary Figure S1). Other outputs as V15.
 #
 # ROC curves: the best panel of each size (1 to MAX_PANEL_SIZE biomarkers) under
 # repeated cross-validation (05b's out-of-fold predictions, pooled over the repeats;
@@ -68,6 +72,8 @@
 #                 Run_info and, for the check, S3_Calibration_metrics)
 #   NESTED_FILE   09's workbook DMFT_Nested_CV_<registry_key>.xlsx
 # Outputs (OUT_DIR)
+#   Figure_ROC_Calibration_nested.png/.pdf    A ROC curves, B calibration of the best panel, nested CV
+#   Figure_ROC_Calibration_repeated.png/.pdf  the same for repeated CV
 #   Figure_ROC_Calibration_repeated_vs_nested.png/.pdf   A, B ROC curves (repeated, nested);
 #                                     C, D calibration of each one's best panel
 #   Figure_ROC_repeated_vs_nested.png/.pdf           A repeated, B nested ROC curves
@@ -627,6 +633,18 @@ TITLE_NES <- sprintf("Calibration, nested cross-validation: %s", NES_MODEL$label
   draw_calibration(CAL_REP, main = TITLE_REP, letter = "C")
   draw_calibration(CAL_NES, main = TITLE_NES, letter = "D")
 })
+# One row per analysis: ROC curves (A) beside the calibration of its best panel (B), with the
+# prediction histogram under the calibration plot (Figure 1: nested; Supplementary Figure S1: repeated)
+.one_row <- function(roc, roc_title, roc_note, best, cal, cal_title) function() {
+  layout(matrix(c(1, 1, 2, 3), 2, 2), heights = c(4.6, 1.4))
+  par(oma = c(0, 0, 0.6, 0))
+  draw_roc(roc, roc_title, roc_note, best = best, letter = "A")
+  draw_calibration(cal, main = cal_title, letter = "B")
+}
+.save_figure("Figure_ROC_Calibration_nested", 12.5, 6.9,
+             .one_row(NES_ROC, TITLE_ROC_NES, NOTE_ROC_NES, BEST_NESTED_K, CAL_NES, TITLE_NES))
+.save_figure("Figure_ROC_Calibration_repeated", 12.5, 6.9,
+             .one_row(REP_ROC, TITLE_ROC_REP, NOTE_ROC_REP, BEST_REPEATED_K, CAL_REP, TITLE_REP))
 
 
 # ==========================================================================
