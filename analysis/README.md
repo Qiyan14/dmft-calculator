@@ -1,34 +1,44 @@
-# DMFT figures, importance, equation and calibration — new results
+# Study analysis scripts
 
-This bundle is updated for the supplied age/BMI summary workbook. It includes the workbook and the original preprocessing, search and Shiny scripts for continuity.
+These scripts produce the study's results: logistic regression panels of one to five salivary biomarkers, each fitted with age, ranked by balanced accuracy at the Youden threshold under five-fold cross-validation repeated five times; nested cross-validation of the whole procedure; and the calculator's single-biomarker equation. Their settings are those of the study's analysis: seed 777, high DMFT defined as DMFT > 13.9, panels of one to five biomarkers, and two covariate sets, biomarker panels with age (`Biomarkers_Age`) and age alone (`Age`). With the study data, script 01 reports 111 participants (56 LD, 55 HD).
 
-The highest-ranked panel in that summary has six biomarkers: Lachnoanaerobaculum orale; Olsenella profusa; unclassified Bacteroidetes G5; Bacteroides heparinolyticus; Weeksellaceae G1 sp. HMT 900; and Peptostreptococcaceae G3 bacterium HMT 950. Age_DOS and BMI remain continuous adjustment variables. The summary reports 111 participants (56 LD, 55 HD), balanced accuracy 0.8807435065, AUC 0.8987005195, sensitivity 0.9032727273, specificity 0.8582142857 and threshold 0.4303368621. The BA endpoints 0.8469926948–0.9058238636 are repeat percentiles, not independent-validation confidence intervals.
+The participant data are not in this repository. Each file name keeps the script's version number.
 
-**Calculator model (November 2026).** Under nested cross-validation the best single biomarker generalized better than larger panels, so the calculator now bundles the single-biomarker model: *Bacteroides heparinolyticus* with age, threshold 0.3834346393 (high DMFT is DMFT > 13.9; five-fold cross-validation repeated 5 times; adding BMI lowered the nested balanced accuracy). `04b_Export_DMFT_Equation_Single_Biomarker.R` exports it from the Biomarkers_Age workbook (top row of `Results_1_Biomarkers`): in the preprocessing session it refits the model, checks the refit against the workbook, and writes `dmft_age_model.csv`, the equation text and the `PUBLISHED_MODEL` block for `app/app.R`.
-
-## What changed
-
-- `00_DMFT_Result_Reader.R` reads the new Best_By_Size and Best_Overall sheets, checks their agreement and preserves the actual Excel row provenance. Keep this helper beside the updated scripts.
-- `03_Figures_DMFT_Age_BMI.R` reads all six winning panels directly from the summary and regenerates the ROC, radar, heatmap and performance figures. It checks that repeated-CV refits reproduce the saved BA, AUC and threshold before exporting them. The selected-panel coefficient CSV is regenerated from the matching fit. Original heatmap colors, non-biomarker mismatch highlighting, row outlines and ROC settings are retained.
-- `08_Variable_Importance_DMFT_Age_BMI.R` adds held-out permutation importance for the six selected biomarkers plus age and BMI. It runs automatically after script 03. Points show mean decreases in balanced accuracy in percentage points at the fixed saved threshold; whiskers show the 2.5th–97.5th percentiles across 20 shuffles, not confidence intervals. It also exports AUC decreases and individual shuffle results. Negative importance is retained. Correlated variables can substitute for one another; this measures model reliance, not causality.
-- `04_Export_DMFT_Equation_Age_BMI.R` takes the selected panel and threshold from the summary, refits its coefficients with the matching participant data, and checks raw-input predictions. For summary inputs, it requires the verified refits from script 03. The selected record is Best_By_Size, Excel row 7. The Shiny output remains `dmft_age_bmi_model.csv`.
-- `05_Calibration_DMFT_Age_BMI.R` reads the new summary and requires the matching participant-level out-of-fold predictions. It stops on mismatched cohort, threshold or performance, then calculates calibration intercept, slope, Brier score, participant-bootstrap intervals and repeat percentiles. The calibration plot and results text use the summary's winning panel.
+| Script | What it does | Results |
+|---|---|---|
+| `01_Preprocessing_DMFT.V8.R` | Reads and merges the three source Excel files; k-nearest-neighbour imputation; log2(raw + 5 × 10⁻⁷); standardization to the LD group; LD and HD groups; the covariate sets (`add_set()` lines) | Cohort |
+| `02_LogReg_DMFT.V8.R` | Panel search: every single biomarker and all 111,156 pairs of the 472 candidates, then beam search keeping the 50 best panels of each size, to five biomarkers; age alone on the same folds | Supplementary Table S1 |
+| `09_Nested_CV_DMFT.V8.R` | Nested cross-validation: in each of five outer training sets, the whole search (inner five-fold cross-validation repeated five times) and the threshold; the best panel of each size, age alone, lasso, elastic net (mixing parameter 0.5) and random forest (500 trees) | Tables 2 and 3, Supplementary File S1 |
+| `04b_Export_DMFT_Equation_Single_Biomarker.V9.R` | Refits the best single biomarker with age to all participants, checks the refit against script 02's workbook, and writes the raw-input equation, `dmft_age_model.csv` and the `PUBLISHED_MODEL` block for `app/app.R` | Section 3.4, the calculator |
+| `05b_Calibration_10rep_DMFT.V11.R` | Rebuilds the repeated cross-validation predictions of the best panel of each size on script 02's folds, checks them against the workbooks, and computes calibration intercept and slope and the Brier score | Supplementary File S2 |
+| `05c_Calibration_Repeated_Nested_DMFT.V15.R` | ROC curves of each panel size and calibration of the best panel under repeated (05b) and nested (09) cross-validation | Figure 1 (nested half), Supplementary Figure S1 (repeated half) |
+| `07_Table1_DMFT_Age_BMI.R` | Descriptive statistics of the cohort by group | Table 1 (a subset of its rows) |
+| `06_Shiny_DMFT.R` | The desktop calculator (see the main README) | |
 
 ## Run order
 
-1. Keep your matching age/BMI preprocessing session open, with `data.dfPH`, `registry_key` and the LD reference statistics. If you restarted R, rerun `01_Preprocessing_DMFT_Age_BMI.R` with exactly the settings used to create this summary. You do not need to repeat the full panel search if the saved resampling file exists.
-2. Put the supplied summary workbook and its matching `DMFT_Age_BMI_Resampling_<registry_key>.rds` in your R working directory. The resampling file was saved by script 02. If the summary is elsewhere, set `RESULTS_FILE` in scripts 03/04 and `CAL_RESULTS_FILE` in script 05 to its full path; keep the resampling RDS beside the workbook.
-3. Source `03_Figures_DMFT_Age_BMI.R` using its full script path. It reconstructs and verifies out-of-fold predictions, writes the figures/model CSV and automatically runs variable importance. Set `MAKE_VARIABLE_IMPORTANCE <- FALSE` in script 03 if you want to run script 08 separately later. Change `VI_PERMUTATIONS` in script 08 to adjust the number of shuffles.
-4. Source `04_Export_DMFT_Equation_Age_BMI.R` for the full equation, coefficient table and model bundle. Keep the same session; its verified-data check prevents reuse of another run's coefficients.
-5. Source `05_Calibration_DMFT_Age_BMI.R` for calibration results and plots. On its own it can read the new `OOF_predictions_k<k>_<tag>.csv` files from `OUT_DIR`; the k=6 file is sufficient to calibrate the selected model alone.
-6. The calculator's model, the single-biomarker model exported by `04b_Export_DMFT_Equation_Single_Biomarker.R`, is bundled in the Shiny app (`app/app.R` and `06_Shiny_DMFT_Age_BMI.R`). After a refit, compare the new `dmft_age_model.csv` with the bundled coefficients before updating them; see `PUBLISHING.md`.
+Use a fresh R session and run the scripts in this order, in the same session, using their full paths: script 01 changes the working directory.
 
-Use full script paths when sourcing because preprocessing changes R's working directory. `readxl`, `caret` and `pROC` are needed for figures; equation/summary input uses `readxl`; permutation calculations use base R. Calibration uses base R plus `readxl`. The remaining scripts keep their existing package requirements.
+1. `01_Preprocessing_DMFT.V8.R`. Set `DATA_DIR_CHOICES` (section 1) to the folder that holds the three source Excel files and check their file names and sheets. The script then works in that folder's `Shared with Qi` subfolder, which must exist; the other scripts read and write there.
+2. `02_LogReg_DMFT.V8.R`. Writes the results workbook of each covariate set (`Results_LogReg_HD_vs_LD_<set>_<registry_key>.xlsx`), the summary files and the fold indices.
+3. `09_Nested_CV_DMFT.V8.R`. Reads script 02's `DMFT_Covariate_Sets_Summary_<registry_key>.xlsx` and writes `DMFT_Nested_CV_<registry_key>.xlsx`. This is the longest step.
+4. `04b_Export_DMFT_Equation_Single_Biomarker.V9.R`. Writes to `DMFT_single_biomarker_equation_Biomarkers_Age`.
+5. `05b_Calibration_10rep_DMFT.V11.R`. Writes to `DMFT_10rep_outputs_Biomarkers_Age`.
+6. `05c_Calibration_Repeated_Nested_DMFT.V15.R`. Reads 05b's folder and 09's workbook and writes to `DMFT_calibration_repeated_nested_Biomarkers_Age`; `Figure_ROC_Calibration_repeated_vs_nested_max5.png` holds the panels of Figure 1 and Supplementary Figure S1.
+7. `07_Table1_DMFT_Age_BMI.R`, at any point after script 01.
 
-## Available data and verification
+The registry key, which ends every output file name, is `DMFT_cutoff13.9_conf_AgeDOS_allBiomarkers_noRatios_noVif_exhaustive12_beam3` with these settings. Scripts 02 and 09 use 10 cores (`numCores`, `NESTED_CORES`).
 
-The attached workbook contains panel-level metrics only. It has no participant-level predictions, fitted coefficients or calibration estimates. Therefore numerical calibration results, actual permutation importance, a fitted risk equation, ROC curves and participant heatmaps cannot be calculated from this file alone. No previous model values or synthetic test values have been substituted.
+## Packages
 
-The reader was tested against all six actual summary rows. Synthetic fixtures verified raw-equation equivalence and Shiny import for all 111 test participants, held-out baseline metrics, reproducible permutations for eight predictors, calibration/bootstrap calculations, provenance, and rejection of mismatched inputs. All R files parse. The importance plot layout was checked on synthetic data. The full study rerun remains to be done using your matching participant data and saved folds.
+- 01: readxl, dplyr, VIM
+- 02: caret, pROC, foreach, doSNOW, dplyr, writexl; fastglm is used when installed
+- 09: readxl, writexl, glmnet and ranger (rstudioapi only for choosing a file in a browser)
+- 04b, 05c: readxl; 05b: readxl and caret (fastglm when installed)
+- 07: dplyr, gtsummary, gt, flextable, officer
 
-From the extracted bundle folder, run `Rscript test_summary_pipeline.R` for the new tests, or `Rscript test_age_bmi.R` for the earlier search/calculator tests. Test data and temporary test equations are synthetic and must not be reported as study results.
+## Checks
+
+The scripts check their inputs against each other: 04b refits the model and compares it with script 02's odds ratios and fitted log-odds; 05b reproduces script 02's out-of-fold predictions and script 09's nested estimates before using them; 05c reproduces 05b's and 09's numbers. `tests/test_selected_model.R` runs 04b on a synthetic workbook and checks that the calculator imports its model file with identical predictions; see the main README.
+
+Cross-validation after panel and threshold selection describes development performance and can be optimistic; the nested estimates describe the selection procedure. Independent validation is still required.
