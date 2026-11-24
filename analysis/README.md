@@ -11,7 +11,7 @@ The participant data are not in this repository. Each file name keeps the script
 | `09_Nested_CV_DMFT.V8.R` | Nested cross-validation: in each of five outer training sets, the whole search (inner five-fold cross-validation repeated five times) and the threshold; the best panel of each size, age alone, lasso, elastic net (mixing parameter 0.5) and random forest (500 trees) | Tables 2 and 3, Supplementary File S1 |
 | `04b_Export_DMFT_Equation_Single_Biomarker.V9.R` | Refits the best single biomarker with age to all participants, checks the refit against script 02's workbook, and writes the raw-input equation, `dmft_age_model.csv` and the `PUBLISHED_MODEL` block for `app/app.R` | Section 3.4, the calculator |
 | `05b_Calibration_10rep_DMFT.V11.R` | Rebuilds the repeated cross-validation predictions of the best panel of each size on script 02's folds, checks them against the workbooks, and computes calibration intercept and slope and the Brier score | Supplementary File S2 |
-| `05c_Calibration_Repeated_Nested_DMFT.V15.R` | ROC curves of each panel size and calibration of the best panel under repeated (05b) and nested (09) cross-validation | Figure 1 (nested half), Supplementary Figure S1 (repeated half) |
+| `05c_Calibration_Repeated_Nested_DMFT.V16.R` | ROC curves of each panel size and calibration of the best panel under repeated (05b) and nested (09) cross-validation | Figure 1 (nested), Supplementary Figure S1 (repeated) |
 | `07_Table1_DMFT_Age_BMI.R` | Descriptive statistics of the cohort by group | Table 1 (a subset of its rows) |
 | `06_Shiny_DMFT.R` | The desktop calculator (see the main README) | |
 
@@ -24,7 +24,7 @@ Use a fresh R session and run the scripts in this order, in the same session, us
 3. `09_Nested_CV_DMFT.V8.R`. Reads script 02's `DMFT_Covariate_Sets_Summary_<registry_key>.xlsx` and writes `DMFT_Nested_CV_<registry_key>.xlsx`. This is the longest step.
 4. `04b_Export_DMFT_Equation_Single_Biomarker.V9.R`. Writes to `DMFT_single_biomarker_equation_Biomarkers_Age`.
 5. `05b_Calibration_10rep_DMFT.V11.R`. Writes to `DMFT_10rep_outputs_Biomarkers_Age`.
-6. `05c_Calibration_Repeated_Nested_DMFT.V15.R`. Reads 05b's folder and 09's workbook and writes to `DMFT_calibration_repeated_nested_Biomarkers_Age`; `Figure_ROC_Calibration_repeated_vs_nested_max5.png` holds the panels of Figure 1 and Supplementary Figure S1.
+6. `05c_Calibration_Repeated_Nested_DMFT.V16.R`. Reads 05b's folder and 09's workbook and writes to `DMFT_calibration_repeated_nested_Biomarkers_Age`; `Figure_ROC_Calibration_nested_max5.png` is Figure 1 and `Figure_ROC_Calibration_repeated_max5.png` is Supplementary Figure S1 (ROC curves beside the calibration of the best panel).
 7. `07_Table1_DMFT_Age_BMI.R`, at any point after script 01.
 
 The registry key, which ends every output file name, is `DMFT_cutoff13.9_conf_AgeDOS_allBiomarkers_noRatios_noVif_exhaustive12_beam3` with these settings. Scripts 02 and 09 use 10 cores (`numCores`, `NESTED_CORES`).
