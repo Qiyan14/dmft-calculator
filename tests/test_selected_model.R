@@ -1,8 +1,8 @@
 # Base-R checks of the calculator; synthetic values below are fixtures, never study results.
-# Rscript tests/test_selected_model.R [path/to/app.R] [path/to/04_Export_DMFT_Equation_Age_BMI.R]
+# Rscript tests/test_selected_model.R [path/to/app.R] [path/to/04b_Export_DMFT_Equation_Single_Biomarker.V9.R]
 args <- commandArgs(trailingOnly=TRUE)
 app_path <- if(length(args)) args[1] else 'app/app.R'
-eq_path <- if(length(args)>1) args[2] else 'analysis/04_Export_DMFT_Equation_Age_BMI.R'
+eq_path <- if(length(args)>1) args[2] else 'analysis/04b_Export_DMFT_Equation_Single_Biomarker.V9.R'
 load_functions <- function(path) {
  e <- new.env(parent=globalenv())
  for(ex in parse(path)) if(is.call(ex) && identical(ex[[1]],as.name('<-'))) {
@@ -68,48 +68,48 @@ triples <- e$level_candidates(job,3L)
 stopifnot(triples$mode=='beam',ncol(triples$cand)==470L,all(triples$cand[1,]==1),all(triples$cand[2,]==2))
 cat('PASS: all 111,156 pairs evaluated; beam extensions start at size 3.\n')
 
-# ---- export script -> app import (synthetic fixture) -----------------------------------
-if (file.exists(eq_path)) {
-q <- load_functions(eq_path)
-key <- 'test_DMFT_Age_BMI_exhaustive12_beam3'
-set.seed(643); n <- 120L; markers <- paste0('Marker',1:6)
-raw <- matrix(exp(rnorm(n*6)),n); colnames(raw)<-markers
+# ---- export script 04b -> app import (synthetic fixture) -------------------------------
+# 04b reads a results workbook of script 02 and the session that script 01 leaves (data.dfPH,
+# stats_PH, registry_key); here both are synthetic, and the workbook is written with writexl.
+if (file.exists(eq_path) && requireNamespace('readxl', quietly=TRUE) && requireNamespace('writexl', quietly=TRUE)) {
+eq_abs <- normalizePath(eq_path)
+set.seed(643); n <- 120L
 outcome <- factor(rep(c('LD','HD'),each=n/2),levels=c('LD','HD'))
-x <- log2(raw+5e-7);mu <- colMeans(x[outcome=='LD',]);sd <- apply(x[outcome=='LD',],2,sd)
-z <- sweep(sweep(x,2,mu),2,sd,'/')
-d <- data.frame(z,Age_DOS=runif(n,20,70),BMI=runif(n,18,40),condL=outcome)
-ref <- data.frame(Column=markers,Mean=mu,SD=sd)
-# Deliberately make a THREE-marker panel best: the export script hardcodes no panel.
-tables <- setNames(lapply(1:6,function(k) {
- row <- as.data.frame(setNames(as.list(markers[1:k]),paste0('Biomarker',1:k)))
- row$Balanced_Accuracy <- if(k==3) .9 else .7
- row$AUC <- .85;row$Threshold <- .47;row
-}),paste0('Results_',1:6,'_Biomarkers'))
-f <- glm(condL ~ Marker1+Marker2+Marker3+Age_DOS+BMI,data=d,family=binomial())
-for(j in 1:3) tables$Results_3_Biomarkers[[paste0('OR_perDoubling_Biomarker',j)]] <- exp(coef(f)[markers[j]]/sd[j])
-pars <- c('Script 1 registry key'=key,'Reference group'='LD','Case group (positive)'='HD',
-          'Model configuration'='Biomarkers_Age_BMI','Confounders'='Age_DOS, BMI',
-          '  k = 2 search'='exhaustive','n (LD)'='60','n (HD)'='60','Total n'='120')
-fakefile <- tempfile(fileext='.xlsx');file.create(fakefile)
-wb <- list(path=fakefile,parameters=data.frame(Parameter=names(pars),Value=unname(pars)),tables=tables)
-q$read_dmft_workbook <- function(path) wb
-out <- tempfile();dir.create(out)
-d <- rbind(d,d[1,]);d$BMI[n+1]<-NA
-b <- q$export_dmft_equation(d,ref,key,output_dir=out,results_file=fakefile)
-stopifnot(length(b$source_rows)==n,b$selected_result$k==3L,b$max_link_difference<1e-8)
-tab <- read.csv(file.path(out,'dmft_age_bmi_model.csv'),stringsAsFactors=FALSE)
+raw <- exp(rnorm(n, ifelse(outcome=='HD', 1, 0), 2)); raw[sample(n, 15)] <- 0   # some not detected
+age <- round(runif(n, 20, 70) + 8*(outcome=='HD'))
+L <- log2(raw+5e-7); mu <- mean(L[outcome=='LD']); sdv <- sd(L[outcome=='LD'])
+key <- 'test_DMFT_cutoff13.9_conf_AgeDOS_allBiomarkers_noRatios_noVif_exhaustive12_beam3'
+ev <- new.env(parent=globalenv())
+ev$data.dfPH <- data.frame(condL=outcome, Marker1=(L-mu)/sdv, Age_DOS=age)
+ev$stats_PH <- data.frame(Column='Marker1', Mean=mu, SD=sdv)
+ev$registry_key <- key
+f <- glm(condL ~ Marker1 + Age_DOS, data=ev$data.dfPH, family=binomial())
+pars <- c('Script 1 registry key'=key, 'Model configuration'='Biomarkers_Age', 'Confounders'='Age_DOS',
+          'Reference group'='LD', 'Case group (positive)'='HD',
+          'DMFT cut-off'='<= 13.9 -> LD (low DMFT) | > 13.9 -> HD (high DMFT) (fixed)',
+          'Cross-validation'="5-fold CV x 5 repeats, seed 777 (caret's own folds)",
+          'Total n'=n, 'n (LD)'=n/2, 'n (HD)'=n/2,
+          'Cohort policy'='Participants complete for Age_DOS (every covariate of every set)')
+res1 <- data.frame(Biomarker1='Marker1', Balanced_Accuracy=0.8, AUC=0.85, Threshold=0.47, Sensitivity=0.8,
+                   Specificity=0.8, OR_perSD_Biomarker1=exp(coef(f)[['Marker1']]),
+                   OR_perDoubling_Biomarker1=exp(coef(f)[['Marker1']]/sdv))
+wd <- tempfile(); dir.create(wd); old_wd <- setwd(wd)
+writexl::write_xlsx(list(Analysis_Parameters=data.frame(Parameter=names(pars), Value=unname(pars)),
+                         Results_1_Biomarkers=res1), sprintf('Results_LogReg_HD_vs_LD_Biomarkers_Age_%s.xlsx', key))
+invisible(capture.output(sys.source(eq_abs, envir=ev)))
+setwd(old_wd)
+out <- file.path(wd, 'DMFT_single_biomarker_equation_Biomarkers_Age')
+stopifnot(ev$MAX_LINK_DIFF < 1e-8, all(ev$CHECKS$Relative_difference < 1e-9))
+tab <- read.csv(file.path(out,'dmft_age_model.csv'), stringsAsFactors=FALSE)
 m <- e$selected_study_model(tab)
-for(i in 1:n)stopifnot(abs(e$predict_model(m,raw[i,1:3],list(Age_DOS=d$Age_DOS[i],BMI=d$BMI[i]))$p-predict(f,type='response')[i])<1e-10)
+for(i in 1:n) stopifnot(abs(e$predict_model(m, raw[i], list(Age_DOS=age[i]))$p - fitted(f)[[i]]) < 1e-10)
 # A different model placed next to the desktop app is refused; the bundled model stays in use
-stopifnot(file.copy(file.path(out,'dmft_age_bmi_model.csv'), file.path(out,'dmft_age_model.csv')))
-r <- e$load_published_coefficients(m0,out)
+r <- e$load_published_coefficients(m0, out)
 stopifnot(grepl('was not used', r$msg), identical(r$model$markers$key, m0$markers$key), e$model_ready(r$model))
 m2<-e$selected_study_model(e$model_to_table(m));stopifnot(e$model_ready(m2))
 bad<-tab;bad$Label[bad$Term=='(Model configuration)']<-'Biomarkers_Age_Sex'
 stopifnot(inherits(try(e$selected_study_model(bad),silent=TRUE),'try-error'))
 bad<-tab[tab$Term!='(Threshold)',];stopifnot(inherits(try(e$selected_study_model(bad),silent=TRUE),'try-error'))
-wb$parameters$Value[trimws(wb$parameters$Parameter)=='k = 2 search']<-'beam'
-stopifnot(inherits(try(q$select_dmft_panel(list(wb),key),silent=TRUE),'try-error'))
-cat('PASS: export script, raw-input equivalence for 120 synthetic participants, import and stale-model rejection.\n')
-}
+cat('PASS: 04b export, raw-input equivalence for 120 synthetic participants, import and stale-model rejection.\n')
+} else cat('SKIPPED: 04b export check (needs', eq_path, 'and the readxl and writexl packages).\n')
 cat('All checks passed.\n')

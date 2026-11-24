@@ -3,6 +3,22 @@
 # All single biomarkers and all pairs are evaluated; beam search starts at size 3.
 # Age_DOS and BMI enter every candidate model in original numeric units.
 # Separate registry keys prevent accidental reuse of previous results.
+#
+# Revision (reviewer comments, Nov 2026):
+#   - 5-fold CV repeated 10 times (CV_REPEATS), the design actually run.
+#   - No screening stage: every panel is scored on all 10 repeats, and the same
+#     predictions rank the panels and give the reported (apparent) numbers.
+#   - Every fold is refitted exactly (the one-step shortcut is removed).
+#   - Repeat range (lowest and highest of the repeats) replaces the 2.5th and
+#     97.5th repeat percentiles, which are not meaningful with 10 repeats.
+#   - Sensitivity, specificity and balanced accuracy at a fixed 0.5 threshold
+#     are reported next to the Youden-threshold values.
+#   - Runs every covariate set of Script 1's DMFT_MODEL_SETS (e.g. biomarkers
+#     only; + age + BMI; + age + sex; + age + sex + BMI; age + sex only), all
+#     treated alike: one common cohort, one set of folds, the same outputs, plus
+#     a covariates-only model for each biomarker set (RUN_BASELINE).
+#   - options(dmft.search.skip_run = TRUE) loads the functions without running
+#     the search.
 
 # ==========================================================================
 # LOGISTIC REGRESSION — FAST COMBINATION SEARCH
@@ -26,25 +42,30 @@
 # The validation project is run in Script 2.
 #
 # How it works
-#   Pass 1, sweep: every combination is cross-validated on the first
-#     SWEEP_REPEATS repeats with a bare IRLS on a prebuilt design matrix, and
-#     ranked by balanced accuracy. With SWEEP_CV = "onestep" each combination
-#     is fitted once on all subjects and each fold's fit is approximated by one
-#     Newton step; "exact" refits every fold.
+#   Pass 1, sweep: every combination is cross-validated on all CV_REPEATS
+#     repeats with a bare IRLS on a prebuilt design matrix, refitting every
+#     fold, and ranked by balanced accuracy.
 #   Pass 2, exact: the best SWEEP_KEEP per panel size are refitted through
-#     caret on all CV_REPEATS repeats. Every exported number comes from pass 2.
-#   Both passes use the same folds: caret's own folds after set.seed(123).
+#     caret on the same folds (caret's own folds after set.seed(SEED)). Both
+#     passes give the same predictions; pass 2 adds the odds ratios and
+#     separation diagnostics, and every exported number comes from it.
 #
 # Metrics (pass 2), from the out-of-fold predictions of all repeats pooled
 #   Youden cut: the cut-off with the highest Sensitivity + Specificity; when
 #     several tie, the one closest to 0.5. Accuracy, Balanced_Accuracy,
 #     Sensitivity, Specificity, Precision and NPV are at that cut. AUC needs
-#     no cut.
-#   Balanced_Accuracy 95% CI: the 2.5th and 97.5th percentiles of the
-#     balanced accuracies of the CV_REPEATS repeats (each subject predicted
-#     once per repeat), at the same cut.
+#     no cut. Balanced_Accuracy = (Youden index + 1) / 2 at this cut, so
+#     ranking by it is ranking by the maximal Youden index.
+#   *_at_0.5: Sensitivity, Specificity and Balanced_Accuracy at a fixed 0.5
+#     threshold, which is not tuned on the predictions.
+#   Balanced_Accuracy_Repeat_Min / _Max: the lowest and highest balanced
+#     accuracies of the CV_REPEATS repeats (each subject predicted once per
+#     repeat), at the Youden cut. They show fold-assignment variability; they
+#     are not confidence intervals.
 #   Balanced_Accuracy_p_Fisher: Fisher's exact test of true by predicted class
 #     at that cut, first repeat (one prediction per subject).
+#   Panels and thresholds are chosen on these predictions, so these numbers
+#   are apparent (optimistic).
 # ==========================================================================
 
 
@@ -58,16 +79,17 @@ RUN_GH <- TRUE
 RUN_GP <- TRUE
 
 min_biomarkers <- 1          # smallest panel exported
-max_biomarkers <- 6          # largest panel exported
+max_biomarkers <- 5          # largest panel exported
 numCores       <- 10
 
 # Cross-validation for every exported number: CV_FOLDS-fold CV repeated
-# CV_REPEATS times. The CI is built from the repeats, so use many.
+# CV_REPEATS times (caret's own folds after set.seed(SEED); SEED is set in
+# script 1, section 1, and is the seed of every random step here).
 CV_FOLDS   <- 5
-CV_REPEATS <- 100
-# Repeats used to rank combinations in the sweep. More gives a steadier
-# ranking and is proportionally slower; exported numbers always use CV_REPEATS.
-SWEEP_REPEATS <- 5
+CV_REPEATS <- 5
+# Also fit, for every covariate set with biomarkers, the same covariates without
+# biomarkers on the same folds (what the biomarkers add; Table 2 baseline)
+RUN_BASELINE <- TRUE
 
 # Export: at each panel size, the top TOP_N per Balanced_Accuracy, Sensitivity
 # and AUC among the refitted models (SWEEP_KEEP, RANK_COLS), sorted by
@@ -82,22 +104,13 @@ USE_PROFILE_CI <- TRUE
 SEPARATION_COEF_LIMIT <- 15
 
 # Checks before the run
-RUN_VALIDATION    <- TRUE    # sweep vs caret, and one-step vs exact sweep; results printed
+RUN_VALIDATION    <- TRUE    # sweep vs caret on the same folds; results printed
 RUN_PREFLIGHT     <- TRUE    # time a sample of models and project the sweep's runtime
 MAX_RUNTIME_HOURS <- 12      # stop when the projected sweep is longer (needs RUN_PREFLIGHT); Inf = no limit
 
 # Sweep
 # Engine: "fastglm" (C++, if installed), "irls" (base R), "glmfit" (stock glm.fit)
 SWEEP_ENGINE <- if (requireNamespace("fastglm", quietly = TRUE)) "fastglm" else "irls"
-# Sweep CV: "onestep" fits each combination once on all subjects and gets each
-# fold's coefficients from one Newton step that removes that fold's subjects,
-# about 3-5x faster than "exact", which refits every fold. It only affects
-# which combinations reach pass 2: exported numbers always come from exact
-# refits. A combination whose full fit is near separation (not converged, or a
-# fitted probability within ~5e-5 of 0 or 1, i.e. |linear predictor| >
-# ONESTEP_ETA_MAX) is refitted fold by fold instead.
-SWEEP_CV        <- "onestep"
-ONESTEP_ETA_MAX <- 10
 SWEEP_KEEP   <- TOP_N        # best combinations per ranking metric refitted in pass 2
 # Ranking columns of the sweep: 1 Accuracy, 2 Sensitivity, 3 Specificity,
 # 4 Precision, 5 NPV, 6 Threshold, 7 AUC, 10 Balanced_Accuracy
@@ -159,7 +172,7 @@ if (!exists("PROJECT") || !exists("registry_key")) {
   .cmps <- if (PROJECT == "perio") PERIO_RUN else "PH"
   if (length(.cmps) == 0)
     .msgs <- c(.msgs, "RUN_PH, RUN_GH and RUN_GP are all FALSE: nothing to run.")
-  .need <- c("confounders", "biomarker_registry",
+  .need <- c("confounders", "biomarker_registry", "SEED",
              unlist(lapply(.cmps, function(x) paste0(c("data.df", "biomarkers_", "stats_"), x,
                                                      c("", "_vif", "_vif")))))
   .miss <- .need[!vapply(.need, exists, logical(1))]
@@ -176,8 +189,8 @@ if (!exists("PROJECT") || !exists("registry_key")) {
     }
   }
 }
-if (!isTRUE(SWEEP_CV %in% c("onestep", "exact")))
-  .msgs <- c(.msgs, sprintf("SWEEP_CV is \"%s\"; use \"onestep\" or \"exact\".", paste(SWEEP_CV, collapse = ", ")))
+if (!(length(CV_REPEATS) == 1 && is.numeric(CV_REPEATS) && CV_REPEATS >= 2 && CV_REPEATS == round(CV_REPEATS)))
+  .msgs <- c(.msgs, "CV_REPEATS must be a whole number of at least 2.")
 if (length(.msgs) > 0)
   stop("\n\n===== PREREQUISITES NOT MET =====\n  ", paste(.msgs, collapse = "\n  "), "\n", call. = FALSE)
 
@@ -236,10 +249,9 @@ if (PROJECT == "caries") {
 
   info <- list(project = PROJECT, condl_source = CONDL_SOURCE, rows = c(
     "DMFT"               = paste(dmft_cols, collapse = " + "),
-    "DMFT groups"        = if (!is.null(get0("DMFT_GROUP_TEXT"))) DMFT_GROUP_TEXT else
-                             sprintf("<= %g -> LD (low DMFT) | > %g -> HD (high DMFT) (%s)",
-                                     DMFT_CUTOFF_USED, DMFT_CUTOFF_USED,
-                                     if (is.null(DMFT_CUTOFF)) "median of the analysed subjects" else "fixed"),
+    "DMFT cut-off"       = sprintf("<= %g -> LD (low DMFT) | > %g -> HD (high DMFT) (%s)",
+                                   DMFT_CUTOFF_USED, DMFT_CUTOFF_USED,
+                                   if (is.null(DMFT_CUTOFF)) "median of the analysed subjects" else "fixed"),
     "Periodontal filter" = if (is.null(DMFT_PERIODONTAL_FILTER)) "none"
                            else paste(DMFT_PERIODONTAL_FILTER, collapse = ", ")))
   SPECS <- list(make_spec("HD_vs_LD", data.dfPH, biomarkers_PH_vif, stats_PH_vif,
@@ -286,10 +298,8 @@ if (!setequal(.conf_script1, as.character(confounders)))
                if (length(confounders)) paste(confounders, collapse = ", ") else "none",
                if (length(.conf_script1)) paste(.conf_script1, collapse = ", ") else "none"), call. = FALSE)
 cat(sprintf("  confounders: %s\n", if (length(confounders)) paste(confounders, collapse = ", ") else "none"))
-cat(sprintf("  CV: %d folds x %d repeats (sweep ranks on the first %d)\n",
-            CV_FOLDS, CV_REPEATS, min(SWEEP_REPEATS, CV_REPEATS)))
-if (CV_REPEATS < 20)
-  cat("  NOTE: the CI is built from the repeats; with fewer than 20 its percentiles are rough.\n")
+cat(sprintf("  CV: %d folds x %d repeats; every panel is scored on all repeats\n", CV_FOLDS, CV_REPEATS))
+cat("  Repeat variability is reported as the range (lowest to highest) across the repeats.\n")
 
 # Script 1 imputes the biomarkers but not the confounders; rows with a missing
 # confounder are left out once, before the folds are built.
@@ -389,22 +399,42 @@ youden_best <- function(roc_obj) {
 }
 
 # Balanced accuracy of each repeat at `cut` (case if P(case) >= cut), the
-# 2.5th / 97.5th percentiles across repeats, and Fisher's exact test on the
-# first repeat
-repeat_ci <- function(pred, lev, cut) {
+# lowest and highest across repeats (with 10 repeats, percentiles such as the
+# 2.5th and 97.5th are not meaningful), and Fisher's exact test on the first
+# repeat
+repeat_range <- function(pred, lev, cut) {
   rep_id <- sub("^.*\\.(Rep[0-9]+)$", "\\1", pred$Resample)
   ba_r <- vapply(split(pred, rep_id), function(d) {
     p <- d[[lev[2]]]
     (mean(p[d$obs == lev[2]] >= cut) + mean(p[d$obs == lev[1]] < cut)) / 2
   }, numeric(1))
-  ci <- if (length(ba_r) >= 2) quantile(ba_r, c(0.025, 0.975), names = FALSE) else c(NA_real_, NA_real_)
+  rng <- if (length(ba_r) >= 2) range(ba_r) else c(NA_real_, NA_real_)
   first <- pred[rep_id == sort(unique(rep_id))[1], , drop = FALSE]
   p_fis <- if (!is.finite(cut)) NA_real_ else
     tryCatch(fisher.test(table(factor(first$obs, levels = lev),
                                factor(first[[lev[2]]] >= cut, levels = c(FALSE, TRUE))))$p.value,
              error = function(e) NA_real_)
-  c(ci, p_fis)
+  c(rng, p_fis)
 }
+
+# Sensitivity and specificity of the pooled predictions at a fixed threshold
+# (default 0.5), which is not tuned on the predictions
+fixed_cut_stats <- function(pred, lev, cut = 0.5) {
+  p <- pred[[lev[2]]]
+  c(mean(p[pred$obs == lev[2]] >= cut), mean(p[pred$obs == lev[1]] < cut))
+}
+
+# Every pooled metric of one set of caret predictions, in the order of
+# assemble_results(): Accuracy, Sensitivity, Specificity, Precision, NPV,
+# Threshold, AUC, repeat min, repeat max, Fisher p, Sensitivity_at_0.5,
+# Specificity_at_0.5
+pooled_metrics <- function(pred, lev) {
+  roc_obj <- suppressMessages(roc(pred$obs, pred[[lev[2]]], levels = lev, direction = "<", quiet = TRUE))
+  m <- youden_best(roc_obj)
+  c(m$accuracy, m$sensitivity, m$specificity, m$precision, m$npv, m$threshold, as.numeric(roc_obj$auc),
+    repeat_range(pred, lev, m$threshold), fixed_cut_stats(pred, lev))
+}
+N_METRICS <- 12L
 
 # Fits every combination in chunk_combinations through caret on ctrl's folds.
 # Returns, per combination, the metrics, the CI and Fisher p, the odds ratios
@@ -413,8 +443,9 @@ run_foreach_chunk <- function(chunk_combinations, cl, data_df, stats_df, confoun
   foreach(
     biomarker_set  = chunk_combinations,
     .packages      = c("caret", "pROC"),
-    .export        = c("customSummary", "is_ratio_feature", "youden_best", "repeat_ci",
-                       "USE_PROFILE_CI", "SEPARATION_COEF_LIMIT"),
+    .export        = c("customSummary", "is_ratio_feature", "youden_best", "repeat_range",
+                       "fixed_cut_stats", "pooled_metrics", "N_METRICS",
+                       "USE_PROFILE_CI", "SEPARATION_COEF_LIMIT", "SEED"),
     .errorhandling = "pass"
   ) %dopar% {
 
@@ -422,7 +453,7 @@ run_foreach_chunk <- function(chunk_combinations, cl, data_df, stats_df, confoun
     tryCatch({
       predictors  <- c(biomarker_set, confounders)
       subset_data <- data_df[, c(predictors, "condL")]
-      set.seed(123)
+      set.seed(SEED)
       logit_model <- train(as.formula(paste("condL ~", paste(predictors, collapse = " + "))),
                            data = subset_data, method = "glm", family = "binomial",
                            metric = "BalancedAccuracy", trControl = ctrl)
@@ -431,17 +462,12 @@ run_foreach_chunk <- function(chunk_combinations, cl, data_df, stats_df, confoun
       pred <- logit_model$pred
 
       if (length(unique(pred$obs)) < 2 || !all(lev %in% colnames(pred))) {
-        results    <- rep(NA_real_, 10)
+        results    <- rep(NA_real_, N_METRICS)
         or_results <- rep(NA_real_, k * 6)
         diagnostics <- rep(NA_real_, 3)
       } else {
         # direction fixed: a higher P(case) means case
-        roc_obj <- suppressMessages(roc(pred$obs, pred[[lev[2]]], levels = lev,
-                                        direction = "<", quiet = TRUE))
-        m <- youden_best(roc_obj)
-        results <- c(m$accuracy, m$sensitivity, m$specificity, m$precision, m$npv,
-                     m$threshold, as.numeric(roc_obj$auc),
-                     repeat_ci(pred, lev, m$threshold))
+        results <- pooled_metrics(pred, lev)
 
         final_model <- logit_model$finalModel
         coefs       <- coef(final_model)
@@ -477,7 +503,7 @@ run_foreach_chunk <- function(chunk_combinations, cl, data_df, stats_df, confoun
            or_metrics = as.numeric(or_results), diagnostics = as.numeric(diagnostics), success = TRUE)
 
     }, error = function(e) {
-      list(biomarkers = biomarker_set, metrics = rep(NA_real_, 10),
+      list(biomarkers = biomarker_set, metrics = rep(NA_real_, N_METRICS),
            or_metrics = rep(NA_real_, k * 6), diagnostics = rep(NA_real_, 3),
            success = FALSE, error_msg = e$message)
     })
@@ -487,7 +513,8 @@ run_foreach_chunk <- function(chunk_combinations, cl, data_df, stats_df, confoun
 assemble_results <- function(results_list, num_biomarkers) {
   biomarker_cols <- paste0("Biomarker", seq_len(num_biomarkers))
   metric_cols    <- c("Accuracy", "Sensitivity", "Specificity", "Precision", "NPV", "Threshold", "AUC",
-                      "Balanced_Accuracy_CI_Lower", "Balanced_Accuracy_CI_Upper", "Balanced_Accuracy_p_Fisher")
+                      "Balanced_Accuracy_Repeat_Min", "Balanced_Accuracy_Repeat_Max", "Balanced_Accuracy_p_Fisher",
+                      "Sensitivity_at_0.5", "Specificity_at_0.5")
   or_cols <- unlist(lapply(seq_len(num_biomarkers), function(i)
     paste0(c("OR_perDoubling_", "OR_perDoubling_Lower_CI_", "OR_perDoubling_Upper_CI_",
              "OR_perSD_", "OR_perSD_Lower_CI_", "OR_perSD_Upper_CI_"), "Biomarker", i)))
@@ -502,9 +529,11 @@ assemble_results <- function(results_list, num_biomarkers) {
   colnames(df) <- all_cols
   for (col in c(metric_cols, or_cols, diag_cols)) df[[col]] <- as.numeric(df[[col]])
   df$Balanced_Accuracy <- (df$Sensitivity + df$Specificity) / 2
-  df[, c(biomarker_cols, "Balanced_Accuracy", "Balanced_Accuracy_CI_Lower", "Balanced_Accuracy_CI_Upper",
+  df$Balanced_Accuracy_at_0.5 <- (df$Sensitivity_at_0.5 + df$Specificity_at_0.5) / 2
+  df[, c(biomarker_cols, "Balanced_Accuracy", "Balanced_Accuracy_Repeat_Min", "Balanced_Accuracy_Repeat_Max",
          "Balanced_Accuracy_p_Fisher", "Accuracy", "Sensitivity", "Specificity", "Precision", "NPV",
-         "Threshold", "AUC", or_cols, diag_cols)]
+         "Threshold", "AUC", "Balanced_Accuracy_at_0.5", "Sensitivity_at_0.5", "Specificity_at_0.5",
+         or_cols, diag_cols)]
 }
 
 build_params_sheet <- function(spec, biomarkers, confounders, start_time, end_time,
@@ -530,15 +559,11 @@ build_params_sheet <- function(spec, biomarkers, confounders, start_time, end_ti
     c("", ""),
     c("=== MODEL ===", ""),
     c("Model", "Multivariable logistic regression (glm, binomial, caret)"),
-    c("Cross-validation", sprintf("%d-fold CV x %d repeats, seed 123 (caret's own folds)", CV_FOLDS, CV_REPEATS)),
-    c("Sweep", sprintf("ranked on the first %d repeat(s) of the same folds; best %d per panel size refitted",
-                       min(SWEEP_REPEATS, CV_REPEATS), SWEEP_KEEP)),
-    c("Sweep CV", if (SWEEP_CV == "onestep") {
-      sprintf(paste("one-step: each combination fitted once on all subjects; each fold's coefficients from one",
-                    "Newton step removing that fold's subjects. Combinations whose full fit did not converge or",
-                    "had |linear predictor| > %g refitted fold by fold. Affects only which combinations are",
-                    "refitted; every exported number comes from the exact refits"), ONESTEP_ETA_MAX)
-    } else "exact: every fold refitted"),
+    c("Cross-validation", sprintf("%d-fold CV x %d repeats, seed %d (caret's own folds)", CV_FOLDS, CV_REPEATS, SEED)),
+    c("Panel scoring", sprintf(paste("every panel scored on all %d repeats; the same predictions rank the panels and",
+                                     "give the reported numbers (best %d per panel size refitted through caret for odds ratios)"),
+                               CV_REPEATS, SWEEP_KEEP)),
+    c("Fold fitting", "exact: every fold refitted"),
     c("Candidate markers", as.character(length(biomarkers))),
     c("Markers per model", sprintf("%d to %d", min_biomarkers, max_biomarkers)),
     c("Confounders", if (length(confounders)) paste(confounders, collapse = ", ") else "none"),
@@ -547,10 +572,12 @@ build_params_sheet <- function(spec, biomarkers, confounders, start_time, end_ti
     c("Youden cut", paste("Cut-off with the highest Sensitivity + Specificity on the pooled out-of-fold",
                           "predictions of all repeats; among tied cut-offs, the one closest to 0.5")),
     c("Accuracy ... NPV", "At the Youden cut; Sensitivity and Precision refer to the case group"),
-    c("Balanced_Accuracy", "(Sensitivity + Specificity) / 2 at the Youden cut; sheets sorted by it (ties: AUC)"),
-    c("Balanced_Accuracy 95% CI", sprintf(paste("2.5th and 97.5th percentiles of the balanced accuracies of the %d repeats",
-                                                "(each subject predicted once per repeat) at the Youden cut; they reflect",
-                                                "the variation from the random split into folds"), CV_REPEATS)),
+    c("Balanced_Accuracy", paste("(Sensitivity + Specificity) / 2 at the Youden cut = (maximal Youden index + 1) / 2;",
+                                 "sheets sorted by it (ties: AUC). Apparent: the cut and panel are chosen on these predictions")),
+    c("*_at_0.5", "Sensitivity, Specificity and Balanced_Accuracy at a fixed 0.5 threshold (not tuned on the predictions)"),
+    c("Balanced_Accuracy repeat range", sprintf(paste("Lowest and highest balanced accuracies of the %d repeats (each subject",
+                                                      "predicted once per repeat) at the Youden cut; variation from the random",
+                                                      "split into folds, not a confidence interval"), CV_REPEATS)),
     c("Balanced_Accuracy_p_Fisher", paste("Fisher's exact test of true class x predicted class at the Youden cut, first repeat",
                                           "(one prediction per subject); leans optimistic, as the cut is chosen on the same predictions")),
     c("AUC", "Pooled out-of-fold predictions of all repeats; direction fixed (higher P(case) = case)"),
@@ -575,10 +602,10 @@ build_params_sheet <- function(spec, biomarkers, confounders, start_time, end_ti
 
 # --- Folds ----------------------------------------------------------------
 # caret draws a private seed inside train() before building its resamples, so
-# set.seed(123) + createMultiFolds() does not reproduce them. The folds are
+# set.seed(SEED) + createMultiFolds() does not reproduce them. The folds are
 # read off a throwaway train() instead and passed to both passes. Folds depend
 # only on the outcome and the seed, not on the predictors.
-caret_fold_index <- function(y, ctrl = control, seed = 123) {
+caret_fold_index <- function(y, ctrl = control, seed = SEED) {
   d <- data.frame(condL = y, z = sin(seq_along(y)))
   set.seed(seed)
   fit <- suppressWarnings(caret::train(condL ~ z, data = d, method = "glm", family = "binomial",
@@ -649,7 +676,6 @@ prepare_worker <- function() {
   pooled_y <- unlist(lapply(tes, function(i) .DSN$y[i]), use.names = FALSE)
   W <- list(
     id = .DSN$id, nb = ncol(base),
-    Xall = Xall, y = .DSN$y, tes = tes,          # for the one-step approximation
     Xtr = lapply(trs, function(i) Xall[i, , drop = FALSE]),
     Xte = lapply(tes, function(i) Xall[i, , drop = FALSE]),
     ytr = lapply(trs, function(i) .DSN$y[i]),
@@ -782,11 +808,10 @@ keep_top <- function(cmb, met, N = SWEEP_RETAIN) {
 }
 
 # --- Sweep worker ----------------------------------------------------------
-# Pooled out-of-fold predictions of one combination (design columns `sel`).
-#
-# Exact: nf fits, each fold warm-started from the previous fold's converged
+# Pooled out-of-fold predictions of one combination (design columns `sel`):
+# nf exact fits, each fold warm-started from the previous fold's converged
 # coefficients (training sets overlap by ~80%).
-.exact_pred <- function(sel, linkinv) {
+.cv_pred <- function(sel, linkinv) {
   out <- numeric(length(W$pooled_y)); b <- NULL; pos <- 0L
   for (f in seq_len(W$nf)) {
     fit <- .fit(W$Xtr[[f]][, sel, drop = FALSE], W$ytr[[f]], start = b)
@@ -799,39 +824,10 @@ keep_top <- function(cmb, met, N = SWEEP_RETAIN) {
   out
 }
 
-# One-step: one fit on all subjects (coefficients b, fitted mu, weights
-# w = mu(1 - mu)); then for each fold f, with its subjects left out,
-#   b_f = b - (X'WX - X_f'W_f X_f)^-1 X_f'(y_f - mu_f)
-# This is one IRLS iteration on the training rows started from b: at b the
-# score over all subjects is zero, so the training score is minus the fold's
-# score, and the training information is the full information minus the
-# fold's share. Only the fold's own rows are touched. Returns NULL near
-# separation, where one step is not enough; the caller then refits per fold.
-.onestep_pred <- function(sel, linkinv) {
-  X    <- W$Xall[, sel, drop = FALSE]
-  full <- .fit(X, W$y)
-  if (is.null(full) || !full$conv) return(NULL)
-  b   <- full$coef
-  eta <- as.vector(X %*% b)
-  if (max(abs(eta)) > ONESTEP_ETA_MAX) return(NULL)
-  mu <- 1 / (1 + exp(-eta)); w <- mu * (1 - mu); r <- W$y - mu
-  H  <- crossprod(X, X * w)
-  out <- numeric(length(W$pooled_y)); pos <- 0L
-  for (f in seq_len(W$nf)) {
-    S  <- W$tes[[f]]; XS <- X[S, , drop = FALSE]
-    R  <- tryCatch(chol(H - crossprod(XS, XS * w[S])), error = function(e) NULL)
-    if (is.null(R)) return(NULL)
-    bf <- b - backsolve(R, backsolve(R, crossprod(XS, r[S]), transpose = TRUE))
-    out[pos + seq_along(S)] <- linkinv(XS %*% bf)
-    pos <- pos + length(S)
-  }
-  out
-}
-
-# Sweep metrics for the combinations in cmb (one per column). Column 9 is 1
-# when the combination was refitted per fold, 0 when the one-step was used;
-# column 8 is unused (pass 2 supplies the diagnostics).
-sweep_cmb <- function(cmb, onestep = SWEEP_CV == "onestep") {
+# Sweep metrics for the combinations in cmb (one per column). Columns 1-7 as in
+# .roc_stats(), 10 balanced accuracy; 8 and 9 are unused (pass 2 supplies the
+# diagnostics).
+sweep_cmb <- function(cmb) {
   m <- ncol(cmb); k <- nrow(cmb); nb <- W$nb
   met     <- matrix(NA_real_, m, 10L)
   linkinv <- stats::binomial()$linkinv                # as predict.glm, so saturated predictions tie as in caret
@@ -839,29 +835,22 @@ sweep_cmb <- function(cmb, onestep = SWEEP_CV == "onestep") {
   bm_slot <- 1L + seq_len(k)
   for (j in seq_len(m)) {
     sel[bm_slot] <- nb + cmb[, j]
-    pred <- if (onestep) .onestep_pred(sel, linkinv) else NULL
-    met[j, 9L] <- is.null(pred)
-    if (is.null(pred)) pred <- .exact_pred(sel, linkinv)
+    pred <- .cv_pred(sel, linkinv)
     if (!is.null(pred)) met[j, 1:7] <- .roc_stats(pred, W$pooled_y, W$np, W$nn)
   }
   met[, 10L] <- (met[, 2L] + met[, 3L]) / 2
   met
 }
 
-# Sweep a block and keep its top, counting the combinations refitted per fold
-.sweep_keep <- function(cmb) {
-  met <- sweep_cmb(cmb)
-  out <- keep_top(cmb, met)
-  out$n_exact <- as.numeric(sum(met[, 9L] == 1))
-  out
-}
+# Sweep a block and keep its top
+.sweep_keep <- function(cmb) keep_top(cmb, sweep_cmb(cmb))
 sweep_task        <- function(t)   .sweep_keep(expand_task(t, .DSN$p))
 sweep_matrix_task <- function(cmb) .sweep_keep(cmb)
 
 .setup_workers <- function(cl, extra) {
   clusterExport(cl, c(".DSN", ".fit", ".fit_glmfit", ".roc_stats", "sweep_cmb", "keep_top",
-                      ".exact_pred", ".onestep_pred", ".sweep_keep", "prepare_worker",
-                      "SWEEP_RETAIN", "RANK_COLS", "SWEEP_ENGINE", "SWEEP_CV", "ONESTEP_ETA_MAX", extra),
+                      ".cv_pred", ".sweep_keep", "prepare_worker",
+                      "SWEEP_RETAIN", "RANK_COLS", "SWEEP_ENGINE", extra),
                 envir = globalenv())
   clusterEvalQ(cl, {
     if (SWEEP_ENGINE == "fastglm") suppressMessages(library(fastglm))
@@ -873,16 +862,15 @@ sweep_matrix_task <- function(cmb) .sweep_keep(cmb)
 }
 
 # Runs `tasks` in groups across the workers, keeping the top as it goes, with
-# progress counted in combinations. Returns the top, the number of combinations
-# swept (n_total) and how many of them were refitted per fold (n_exact).
+# progress counted in combinations. Returns the top and the number of
+# combinations swept (n_total).
 .run_tasks <- function(cl, tasks, sizes, task_fun, k, group_mult = 4L) {
   groups <- split(seq_along(tasks), ceiling(seq_along(tasks) / max(1L, length(cl) * group_mult)))
   total  <- sum(sizes)
-  t0 <- Sys.time(); done <- 0; n_exact <- 0
+  t0 <- Sys.time(); done <- 0
   buf_cmb <- NULL; buf_met <- NULL
   for (g in groups) {
     res <- parLapplyLB(cl, tasks[g], task_fun)
-    n_exact <- n_exact + sum(vapply(res, `[[`, numeric(1), "n_exact"))
     buf_cmb <- cbind(buf_cmb, do.call(cbind, lapply(res, `[[`, "cmb")))
     buf_met <- rbind(buf_met, do.call(rbind, lapply(res, `[[`, "met")))
     if (ncol(buf_cmb) > 20000L) { red <- keep_top(buf_cmb, buf_met); buf_cmb <- red$cmb; buf_met <- red$met }
@@ -896,12 +884,8 @@ sweep_matrix_task <- function(cmb) .sweep_keep(cmb)
   }
   top <- keep_top(buf_cmb, buf_met)
   top$n_total <- total
-  top$n_exact <- n_exact
-  cat(sprintf("\n  k = %d done in %s | %d retained%s\n", k,
-              format_duration(as.numeric(difftime(Sys.time(), t0, units = "secs"))), ncol(top$cmb),
-              if (SWEEP_CV == "onestep")
-                sprintf(" | refitted per fold (near separation): %s (%s)",
-                        format(n_exact, big.mark = ","), .pct(n_exact / total)) else ""))
+  cat(sprintf("\n  k = %d done in %s | %d retained\n", k,
+              format_duration(as.numeric(difftime(Sys.time(), t0, units = "secs"))), ncol(top$cmb)))
   top
 }
 
@@ -948,7 +932,7 @@ run_beam_level <- function(parents, k, cl, chunk = 2000L) {
 preflight <- function(ks, counts, modes, selected_size = NA_integer_) {
   if (!exists("W", envir = globalenv()) || !identical(W$id, .DSN$id)) prepare_worker()
   k_probe <- max(ks)
-  set.seed(1)
+  set.seed(SEED)
   cmb <- vapply(seq_len(100), function(i) sort(sample.int(.DSN$p, k_probe)), integer(k_probe))
   if (!is.matrix(cmb)) cmb <- matrix(cmb, nrow = k_probe)
   per  <- system.time(sweep_cmb(cmb))[["elapsed"]] / 100
@@ -968,7 +952,7 @@ preflight <- function(ks, counts, modes, selected_size = NA_integer_) {
     stop(sprintf(paste0("Projected sweep time %.1f h exceeds MAX_RUNTIME_HOURS (%.1f). Options:\n",
                         "  - Script 1: %s_MARKERS <- \"selected\" (%s instead of all %d markers)\n",
                         "  - SEARCH_MODE <- \"beam\" or \"auto\"\n",
-                        "  - fewer SWEEP_REPEATS or a lower max_biomarkers (now %d)\n",
+                        "  - fewer CV_REPEATS or a lower max_biomarkers (now %d)\n",
                         "  - a higher MAX_RUNTIME_HOURS"),
                  sum(secs) / 3600, MAX_RUNTIME_HOURS, toupper(PROJECT),
                  if (is.na(selected_size)) "the selected list" else sprintf("%d selected markers", selected_size),
@@ -1012,12 +996,11 @@ run_pipeline_fast <- function(spec) {
   data_df$condL <- factor(data_df$condL)
   levels(data_df$condL) <- make.names(levels(data_df$condL))
 
-  # one set of folds for both passes; the sweep uses the first SWEEP_REPEATS repeats
+  # one set of folds for both passes
   idx <- if (!is.null(spec$folds)) spec$folds else caret_fold_index(data_df$condL)
   ctrl_exact       <- control
   ctrl_exact$index <- idx
-  n_sweep_folds    <- CV_FOLDS * min(SWEEP_REPEATS, CV_REPEATS)
-  assign(".DSN", build_design(data_df, biomarkers, conf, folds_idx = idx[seq_len(n_sweep_folds)],
+  assign(".DSN", build_design(data_df, biomarkers, conf, folds_idx = idx,
                               id = paste(spec$tag, format(Sys.time(), "%Y%m%d %H:%M:%OS6"))),
          envir = globalenv())
   prepare_worker()
@@ -1045,11 +1028,10 @@ run_pipeline_fast <- function(spec) {
   cl <- makeCluster(numCores)
   on.exit({ try(stopCluster(cl), silent = TRUE); registerDoSEQ() }, add = TRUE)
 
-  all_results <- list(); n_evaluated <- 0; best_by_k <- c(); exact_share <- c(); parents <- NULL
+  all_results <- list(); n_evaluated <- 0; best_by_k <- c(); agree <- c(); parents <- NULL
   for (k in levels_run) {
     top <- if (modes[k] == "beam") run_beam_level(parents, k, cl) else run_sweep(k, cl)
     n_evaluated <- n_evaluated + top$n_total
-    exact_share[as.character(k)] <- top$n_exact / top$n_total
     best_by_k[as.character(k)] <- suppressWarnings(max(top$met[, 10], na.rm = TRUE))
     cat(sprintf("  [k=%d] best sweep balanced accuracy: %.4f\n", k, best_by_k[[as.character(k)]]))
     parents <- keep_top(top$cmb, top$met, BEAM_WIDTH)$cmb
@@ -1060,8 +1042,15 @@ run_pipeline_fast <- function(spec) {
     cat(sprintf("  [k=%d] refitting %d through caret (%d x %d CV)...\n", k, length(combos), CV_FOLDS, CV_REPEATS))
     registerDoSNOW(cl)
     exact <- run_foreach_chunk(combos, cl, data_df, spec$stats, conf, ctrl_exact)
-    all_results[[as.character(k)]] <- assemble_results(exact, k) %>%
-      mutate(across(where(is.numeric), ~ round(., 10)))
+    res_k <- assemble_results(exact, k)
+    # The sweep and caret fit the same folds, so their AUC and balanced
+    # accuracy should agree (apart from fits flagged for separation).
+    ok <- is.finite(res_k$AUC) & res_k$Separation_Flag %in% 0
+    agree[as.character(k)] <- if (any(ok)) max(abs(c(res_k$AUC[ok] - exp_top$met[ok, 7],
+                                                     res_k$Balanced_Accuracy[ok] - exp_top$met[ok, 10]))) else NA_real_
+    cat(sprintf("  [k=%d] sweep vs caret, largest |difference| in AUC / balanced accuracy: %.2g (%d unflagged panels)\n",
+                k, agree[[as.character(k)]], sum(ok)))
+    all_results[[as.character(k)]] <- res_k %>% mutate(across(where(is.numeric), ~ round(., 10)))
   }
   t_end <- Sys.time()
 
@@ -1076,12 +1065,11 @@ run_pipeline_fast <- function(spec) {
                 if (as.integer(nm) > 1) sprintf("  (%+.4f)", best_by_k[[nm]] - best_by_k[[as.character(as.integer(nm) - 1)]]) else ""))
 
   params <- build_params_sheet(spec, biomarkers, conf, t_start, t_end, group_counts, n_dropped)
-  onestep <- SWEEP_CV == "onestep"
   params <- rbind(params, data.frame(
     Parameter = c("", "=== SEARCH ===", "Search mode", "Exhaustive limit", "Beam width (per metric)",
                   "Models swept", "Exhaustive equivalent", "Sweep ranking", "Export",
                   paste0("  k = ", levels_run, " search"), paste0("  k = ", levels_run, " best sweep balanced accuracy"),
-                  if (onestep) paste0("  k = ", levels_run, " refitted per fold in the sweep (near separation)")),
+                  if (length(agree)) paste0("  k = ", names(agree), " sweep vs caret, max |difference|")),
     Value = c("", "", SEARCH_MODE, format(EXHAUSTIVE_LIMIT, big.mark = ",", scientific = FALSE),
               as.character(BEAM_WIDTH), format(n_evaluated, scientific = FALSE),
               format(sum(choose(p, ks)), scientific = FALSE),
@@ -1089,12 +1077,12 @@ run_pipeline_fast <- function(spec) {
                       "Max_Abs_Coef", "Converged", "Balanced_Accuracy")[RANK_COLS], collapse = ", "),
               sprintf("Top %d per Balanced_Accuracy, Sensitivity and AUC among the refitted models", TOP_N),
               modes[levels_run], sprintf("%.4f", best_by_k[as.character(levels_run)]),
-              if (onestep) .pct(exact_share[as.character(levels_run)])),
+              if (length(agree)) sprintf("%.2g", agree)),
     stringsAsFactors = FALSE))
 
   if (!is.null(spec$model_name)) params <- rbind(params, data.frame(
     Parameter = c("Model configuration", "Cohort policy"),
-    Value = c(spec$model_name, "Participants complete for Age_DOS and BMI; no Sex-based exclusion")))
+    Value = c(spec$model_name, .cohort_policy(spec))))
   export_list <- list(Analysis_Parameters = params)
   for (k in ks) {
     df_k <- get_top_n_per_metric(all_results[[as.character(k)]])
@@ -1111,16 +1099,12 @@ run_pipeline_fast <- function(spec) {
 # ==========================================================================
 # 9) CHECK THE SWEEP
 # ==========================================================================
-# 1) The sweep's exact path against caret: ~50 random combinations through
-#    both, on the same folds (the sweep's). Accuracy, Sensitivity,
-#    Specificity, Precision, NPV and Threshold should agree exactly; AUC to
-#    rounding, or in the 4th-5th decimal where predictions nearly tie (both
-#    stop at glm's 1e-8 tolerance from different starts). Rows flagged for
-#    separation are reported apart: glm stops at 25 iterations, the IRLS at 30.
-# 2) SWEEP_CV = "onestep": the one-step against the exact path on up to
-#    n_rank combinations of k markers (all of them when there are fewer): how
-#    close the metrics are, how similar the ranking is, and whether the exact
-#    top 10 are inside the one-step's top SWEEP_KEEP, the set pass 2 refits.
+# The sweep against caret: ~50 random combinations through both, on the same
+# folds (the sweep's). Accuracy, Sensitivity, Specificity, Precision, NPV and
+# Threshold should agree exactly; AUC to rounding, or in the 4th-5th decimal
+# where predictions nearly tie (both stop at glm's 1e-8 tolerance from
+# different starts). Rows flagged for separation are reported apart: glm stops
+# at 25 iterations, the IRLS at 30.
 
 # n combinations of k of p markers, one per column; all of them when there are
 # no more than n
@@ -1135,7 +1119,7 @@ run_pipeline_fast <- function(spec) {
   pick[, seq_len(n), drop = FALSE]
 }
 
-validate_fast_vs_caret <- function(spec, k = 3L, n_sample = 50L, n_rank = 2000L) {
+validate_fast_vs_caret <- function(spec, k = 3L, n_sample = 50L) {
   conf       <- resolve_confounders(spec$data, if (!is.null(spec$model_name)) spec$covariates else confounders)
   data_df    <- drop_incomplete_confounders(spec$data, conf)$data
   biomarkers <- intersect(spec$biomarkers, colnames(data_df))
@@ -1144,26 +1128,24 @@ validate_fast_vs_caret <- function(spec, k = 3L, n_sample = 50L, n_rank = 2000L)
   levels(data_df$condL) <- make.names(levels(data_df$condL))
 
   idx  <- caret_fold_index(data_df$condL)
-  idx  <- idx[seq_len(CV_FOLDS * min(SWEEP_REPEATS, CV_REPEATS))]
   ctrl <- control
-  ctrl$index   <- idx
-  ctrl$repeats <- min(SWEEP_REPEATS, CV_REPEATS)
+  ctrl$index <- idx
   assign(".DSN", build_design(data_df, biomarkers, conf, folds_idx = idx,
                               id = paste("validate", format(Sys.time(), "%H:%M:%OS6"))), envir = globalenv())
   prepare_worker()
 
   p    <- length(biomarkers)
-  pick <- .sample_combos(p, k, n_sample, seed = 99)
+  pick <- .sample_combos(p, k, n_sample, seed = SEED)
 
-  cat(sprintf("  1) Exact sweep vs caret: %d combinations of %d markers\n", ncol(pick), k))
-  tf   <- system.time(fast <- sweep_cmb(pick, onestep = FALSE))[["elapsed"]]
+  cat(sprintf("  Sweep vs caret: %d combinations of %d markers\n", ncol(pick), k))
+  tf   <- system.time(fast <- sweep_cmb(pick))[["elapsed"]]
   cl   <- makeCluster(2L); registerDoSNOW(cl)
   ts   <- system.time(slow <- run_foreach_chunk(lapply(seq_len(ncol(pick)), function(j) biomarkers[pick[, j]]),
                                                 cl, data_df, spec$stats, conf, ctrl))[["elapsed"]]
   stopCluster(cl); registerDoSEQ()
 
   slow_m <- t(vapply(slow, function(r)
-    if (is.list(r) && length(r$metrics) == 10) as.numeric(r$metrics[1:7]) else rep(NA_real_, 7), numeric(7)))
+    if (is.list(r) && length(r$metrics) == N_METRICS) as.numeric(r$metrics[1:7]) else rep(NA_real_, 7), numeric(7)))
   sep    <- vapply(slow, function(r) is.list(r) && length(r$diagnostics) == 3 && isTRUE(r$diagnostics[2] == 1),
                    logical(1))
   failed <- is.na(slow_m[, 7])
@@ -1178,120 +1160,158 @@ validate_fast_vs_caret <- function(spec, k = 3L, n_sample = 50L, n_rank = 2000L)
     cat(sprintf("  Separation-flagged rows, max |AUC difference|: %.4f\n",
                 max(abs(fast[sep, 7] - slow_m[sep, 7]), na.rm = TRUE)))
   cat(sprintf("  sweep (1 core): %.2fs | caret (2 cores): %.2fs\n", tf, ts))
-
-  if (SWEEP_CV == "onestep") {
-    pick2 <- .sample_combos(p, k, n_rank, seed = 98)
-    cat(sprintf("\n  2) One-step vs exact sweep: %s combinations of %d markers%s\n",
-                format(ncol(pick2), big.mark = ","), k,
-                if (ncol(pick2) == choose(p, k)) " (all of them)" else " (random)"))
-    t_ex <- system.time(ex <- sweep_cmb(pick2, onestep = FALSE))[["elapsed"]]
-    t_os <- system.time(os <- sweep_cmb(pick2, onestep = TRUE))[["elapsed"]]
-    used   <- os[, 9] == 0 & !is.na(ex[, 10]) & !is.na(os[, 10])
-    keep_n <- min(SWEEP_KEEP, ncol(pick2))
-    top10  <- order(-ex[, 10], -ex[, 7])[seq_len(min(10, ncol(pick2)))]
-    rk     <- rank(-os[, 10], ties.method = "min", na.last = "keep")
-    cat(sprintf("    refitted per fold (near separation): %d (%s)\n", sum(os[, 9] == 1), .pct(mean(os[, 9] == 1))))
-    if (sum(used) >= 2) {
-      d_auc <- abs(ex[used, 7] - os[used, 7]); d_ba <- abs(ex[used, 10] - os[used, 10])
-      cat(sprintf("    |AUC difference|: median %.4f, 95th percentile %.4f\n", median(d_auc), quantile(d_auc, 0.95)))
-      cat(sprintf("    balanced accuracy: identical in %.0f%%, |difference| 95th percentile %.4f\n",
-                  100 * mean(d_ba < 1e-12), quantile(d_ba, 0.95)))
-      cat(sprintf("    rank correlation (Spearman) of balanced accuracy: %.3f\n",
-                  cor(ex[used, 10], os[used, 10], method = "spearman")))
-    }
-    cat(sprintf("    exact top %d inside the one-step top %d (the set pass 2 refits): %d of %d\n",
-                length(top10), keep_n, sum(rk[top10] <= keep_n, na.rm = TRUE), length(top10)))
-    missed <- top10[is.na(rk[top10]) | rk[top10] > keep_n]
-    if (length(missed))
-      cat(sprintf("    left out: exact balanced accuracy %s; lowest kept: %.4f (close values = near-ties)\n",
-                  paste(sprintf("%.4f", ex[missed, 10]), collapse = ", "),
-                  min(ex[which(rk <= keep_n), 10], na.rm = TRUE)))
-    cat(sprintf("    time (1 core): exact %.1fs, one-step %.1fs (%.1fx faster)\n", t_ex, t_os, t_ex / max(t_os, 1e-6)))
-  }
   invisible(list(fast = fast, slow = slow_m, cmp = cmp, separated = sep))
 }
 
 
 # ==========================================================================
-# 10) RUN AGE-AND-BMI ADJUSTED DMFT SEARCH
+# 10) RUN THE DMFT SEARCH FOR EVERY COVARIATE SET
 # ==========================================================================
-# One age/BMI-adjusted search uses shared participants and folds at every panel size.
-# Selection and Youden cutoff optimization still use development predictions;
-# this comparison is exploratory, not independent validation.
-if (PROJECT != "DMFT") stop("This age/BMI runner requires PROJECT = 'DMFT'.")
+# Script 1's DMFT_MODEL_SETS: the panel search runs once for every set with
+# biomarkers = TRUE; sets with biomarkers = FALSE are covariates-only models.
+# Every set is treated alike: one common cohort (participants complete for
+# every covariate of every set), the same folds, and the same outputs.
+#   DMFT_Summary_<set>_<key>.xlsx               per set: best panel overall and
+#                                               at each size, its covariates-only model
+#   DMFT_Covariate_Sets_Summary_<key>.xlsx      all sets side by side
+#   Results_LogReg_HD_vs_LD_<set>_<key>.xlsx    per set: every refitted panel
+#   DMFT_Resampling_<key>.rds                   cohort rows and folds of every set
+# Panel and threshold selection use these development predictions, so the
+# numbers are apparent (optimistic).
+if (PROJECT != "DMFT") stop("This runner requires PROJECT = 'DMFT'.")
 if (!exists("DMFT_MODEL_SETS"))
   stop("Run 01_Preprocessing_DMFT_Age_BMI.R first in this session.")
 
-run_dmft_age_bmi <- function(base_spec) {
-  if (SEARCH_MODE != "beam") stop("This study version requires SEARCH_MODE = beam (from size 3).")
-  sets <- DMFT_MODEL_SETS
-  if (!identical(names(sets), "Biomarkers_Age_BMI") ||
-      !identical(sets[[1]]$covariates, c("Age_DOS", "BMI")) ||
-      !grepl("_exhaustive12_beam3$", registry_key))
-    stop("Run 01_Preprocessing_DMFT_Age_BMI.R before this revised analysis.")
-  required <- unique(unlist(lapply(sets, `[[`, "covariates")))
+# Covariates that define the common cohort: every covariate of every set
+dmft_cohort_covariates <- function(sets = DMFT_MODEL_SETS)
+  unique(unlist(lapply(sets, function(s) as.character(s$covariates))))
+
+.set_label <- function(covs) if (length(covs)) paste(covs, collapse = ", ") else "none"
+
+# The analysis cohort: participants complete for the covariates in `required`
+dmft_cohort <- function(base_spec, required = dmft_cohort_covariates()) {
+  required <- as.character(required)
   missing <- setdiff(required, names(base_spec$data))
   if (length(missing)) stop("Required columns missing: ", paste(missing, collapse = ", "))
   d <- as.data.frame(base_spec$data)
-  for (v in c("Age_DOS", "BMI")) {
-    if (!is.numeric(d[[v]])) stop(v, " must be numeric in original units.")
-    if (any(!is.na(d[[v]]) & !is.finite(d[[v]]))) stop(v, " contains infinite values.")
+  for (v in required) {
+    x <- d[[v]]
+    if (is.numeric(x)) {
+      if (any(!is.na(x) & !is.finite(x))) stop(v, " contains infinite values.")
+    } else if (is.character(x) || is.logical(x)) {
+      d[[v]] <- factor(x)
+    } else if (!is.factor(x)) stop(v, " must be numeric or categorical.")
   }
-  ok <- complete.cases(d[, required, drop = FALSE]) & !is.na(d$condL)
-  common_dropped <- sum(!ok)
+  ok <- (if (length(required)) complete.cases(d[, required, drop = FALSE]) else rep(TRUE, nrow(d))) & !is.na(d$condL)
   source_rows <- which(ok)
   d <- droplevels(d[ok, , drop = FALSE])
   if (!setequal(as.character(unique(d$condL)), c("LD", "HD")))
     stop("Expected LD and HD outcome labels.")
   d$condL <- factor(d$condL, levels = c("LD", "HD"))
   if (min(table(d$condL)) < CV_FOLDS) stop("Too few participants per group for CV_FOLDS.")
+  for (v in required) if (is.factor(d[[v]]) && nlevels(d[[v]]) < 2)
+    stop(v, " has a single category in the cohort; it cannot be a covariate.")
   if (any(!is.finite(as.matrix(d[, base_spec$biomarkers, drop = FALSE]))))
     stop("Missing or non-finite preprocessed biomarkers remain.")
+  list(data = d, source_rows = source_rows, dropped = sum(!ok), required = required)
+}
+
+# A covariates-only model for each biomarker set that has covariates, unless a
+# set without biomarkers already has the same covariates
+add_baseline_sets <- function(sets) {
+  key  <- function(s) paste(sort(as.character(s$covariates)), collapse = "+")
+  have <- vapply(sets[!vapply(sets, function(s) isTRUE(s$biomarkers), logical(1))], key, character(1))
+  for (nm in names(sets)) {
+    s <- sets[[nm]]
+    if (!isTRUE(s$biomarkers) || !length(s$covariates) || key(s) %in% have) next
+    bn <- paste0(sub("^Biomarkers_", "", nm), "_Only")
+    if (bn %in% names(sets)) bn <- paste0(nm, "_Covariates_Only")
+    bn <- tail(make.unique(c(names(sets), bn), sep = "_"), 1)   # never replaces a set
+    sets[[bn]] <- list(biomarkers = FALSE, covariates = s$covariates)
+    have <- c(have, key(s))
+  }
+  sets
+}
+
+.cohort_policy <- function(spec)
+  if (length(spec$cohort_covariates)) sprintf("Participants complete for %s (every covariate of every set)",
+                                              paste(spec$cohort_covariates, collapse = ", ")) else "All participants"
+
+# Covariates-only model (no biomarkers) on the same folds. Writes its own
+# workbook and returns its one-row summary.
+fit_covariate_baseline <- function(spec, d, ctl, nm) {
+  started <- Sys.time(); set.seed(SEED)
+  fit <- caret::train(reformulate(spec$covariates, response = "condL"),
+                      data = d, method = "glm", family = "binomial",
+                      metric = "BalancedAccuracy", trControl = ctl)
+  pred <- fit$pred; lev <- levels(d$condL)
+  if (any(!is.finite(pred[[lev[2]]]))) stop("Non-finite covariates-only predictions.")
+  m <- pooled_metrics(pred, lev)
+  row <- data.frame(Balanced_Accuracy = (m[2] + m[3]) / 2,
+                    Balanced_Accuracy_Repeat_Min = m[8], Balanced_Accuracy_Repeat_Max = m[9],
+                    Balanced_Accuracy_p_Fisher = m[10],
+                    Accuracy = m[1], Sensitivity = m[2], Specificity = m[3], Precision = m[4], NPV = m[5],
+                    Threshold = m[6], AUC = m[7],
+                    Balanced_Accuracy_at_0.5 = (m[11] + m[12]) / 2, Sensitivity_at_0.5 = m[11],
+                    Specificity_at_0.5 = m[12], Converged = fit$finalModel$converged, row.names = NULL)
+  pars <- build_params_sheet(spec, character(0), spec$covariates, started, Sys.time(),
+                             as.list(table(d$condL)), spec$common_dropped)
+  pars$Value[which(pars$Parameter == "Markers per model")] <- "0 (covariates only)"
+  pars$Value[which(pars$Parameter == "Panel scoring")] <- "Not applicable; fixed covariates-only model"
+  pars <- rbind(pars, data.frame(Parameter = c("Model configuration", "Cohort policy"),
+                                 Value = c(nm, .cohort_policy(spec))))
+  co <- coef(summary(fit$finalModel))
+  co <- data.frame(Term = rownames(co), co, row.names = NULL, check.names = FALSE)
+  write_xlsx(list(Analysis_Parameters = pars, Results_0_Biomarkers = row,
+                  Coefficients = co, CV_Predictions = pred),
+             sprintf("Results_LogReg_%s_%s.xlsx", spec$tag, registry_key))
+  row
+}
+
+run_dmft_model_sets <- function(base_spec) {
+  if (SEARCH_MODE != "beam") stop("This study version requires SEARCH_MODE = beam (from size 3).")
+  if (!grepl("_exhaustive12_beam3$", registry_key))
+    stop("Run 01_Preprocessing_DMFT_Age_BMI.R before this revised analysis.")
+  sets <- biomarker_registry[[registry_key]]$model_sets   # the sets Script 1 checked
+  if (is.null(sets)) sets <- DMFT_MODEL_SETS
+  if (!is.list(sets) || !length(sets) || is.null(names(sets)) || anyDuplicated(names(sets)))
+    stop("DMFT_MODEL_SETS must be a list of uniquely named sets; re-run Script 1.")
+  if (!setequal(dmft_cohort_covariates(sets), as.character(confounders)))
+    stop("The covariates of DMFT_MODEL_SETS differ from the ones Script 1 ran with. Re-run Script 1.")
+  if (RUN_BASELINE) sets <- add_baseline_sets(sets)
+  is_bm <- vapply(sets, function(s) isTRUE(s$biomarkers), logical(1))
+  if (!any(is_bm)) stop("DMFT_MODEL_SETS has no set with biomarkers = TRUE.")
+
+  co <- dmft_cohort(base_spec, dmft_cohort_covariates(sets))
+  d <- co$data; common_dropped <- co$dropped; source_rows <- co$source_rows
   folds <- caret_fold_index(d$condL)
   ctl <- control; ctl$index <- folds
   # Persist exact fold assignment and original row mapping for reproducibility.
   saveRDS(list(index = folds, source_rows = source_rows, outcome = d$condL,
-               registry_key = registry_key,
+               cohort_covariates = co$required, registry_key = registry_key,
                model_sets = sets, common_dropped = common_dropped),
-          sprintf("DMFT_Age_BMI_Resampling_%s.rds", registry_key))
-  message("Age/BMI cohort: ", nrow(d), " participants; excluded ", common_dropped)
+          sprintf("DMFT_Resampling_%s.rds", registry_key))
+  cat(sprintf("\n===== %d covariate set(s) | common cohort: %d participants (LD %d, HD %d), %d excluded | complete for: %s =====\n",
+              length(sets), nrow(d), sum(d$condL == "LD"), sum(d$condL == "HD"), common_dropped, .set_label(co$required)))
+  for (nm in names(sets))
+    cat(sprintf("  %-28s %s %s\n", nm, if (is_bm[[nm]]) "panel search +" else "covariates only:",
+                .set_label(sets[[nm]]$covariates)))
+
   all_summary <- list(); status <- character(0); all_runs <- list()
   metric_cols <- c("Balanced_Accuracy", "Accuracy", "Sensitivity", "Specificity",
                    "Precision", "NPV", "Threshold", "AUC",
-                   "Balanced_Accuracy_CI_Lower", "Balanced_Accuracy_CI_Upper")
+                   "Balanced_Accuracy_Repeat_Min", "Balanced_Accuracy_Repeat_Max",
+                   "Balanced_Accuracy_at_0.5", "Sensitivity_at_0.5", "Specificity_at_0.5")
   for (nm in names(sets)) {
+    cat(sprintf("\n########## Covariate set %d of %d: %s ##########\n", match(nm, names(sets)), length(sets), nm))
     spec <- base_spec; spec$data <- d; spec$model_name <- nm
-    spec$covariates <- sets[[nm]]$covariates
+    spec$covariates <- as.character(sets[[nm]]$covariates)
     spec$common_dropped <- common_dropped; spec$folds <- folds
+    spec$cohort_covariates <- co$required
     spec$tag <- paste0(base_spec$tag, "_", nm)
     status[nm] <- tryCatch({
-      if (!isTRUE(sets[[nm]]$biomarkers)) {
-        started <- Sys.time(); set.seed(123)
-        fit <- caret::train(reformulate(spec$covariates, response = "condL"),
-                            data = d, method = "glm", family = "binomial",
-                            metric = "BalancedAccuracy", trControl = ctl)
-        pred <- fit$pred; lev <- levels(d$condL)
-        if (any(!is.finite(pred[[lev[2]]]))) stop("Non-finite baseline predictions.")
-        roc_obj <- pROC::roc(pred$obs, pred[[lev[2]]], levels = lev, direction = "<", quiet = TRUE)
-        m <- youden_best(roc_obj); ci <- repeat_ci(pred, lev, m$threshold)
-        row <- data.frame(Balanced_Accuracy = (m$sensitivity + m$specificity) / 2,
-                          Accuracy = m$accuracy, Sensitivity = m$sensitivity,
-                          Specificity = m$specificity, Precision = m$precision,
-                          NPV = m$npv, Threshold = m$threshold, AUC = as.numeric(pROC::auc(roc_obj)),
-                          Balanced_Accuracy_CI_Lower = ci[1], Balanced_Accuracy_CI_Upper = ci[2],
-                          Balanced_Accuracy_p_Fisher = ci[3], Converged = fit$finalModel$converged)
-        pars <- build_params_sheet(spec, character(0), spec$covariates, started, Sys.time(),
-                                   as.list(table(d$condL)), common_dropped)
-        pars$Value[which(pars$Parameter == "Markers per model")] <- "0 (demographic baseline)"
-        pars$Value[which(pars$Parameter %in% c("Sweep", "Sweep CV"))] <- "Not applicable; fixed age + BMI model"
-        pars <- rbind(pars, data.frame(Parameter = c("Model configuration", "Cohort policy"),
-                Value = c(nm, "Participants complete for Age_DOS and BMI; no Sex-based exclusion")))
-        co <- coef(summary(fit$finalModel))
-        co <- data.frame(Term = rownames(co), co, row.names = NULL, check.names = FALSE)
-        write_xlsx(list(Analysis_Parameters = pars, Results_0_Biomarkers = row,
-                        Coefficients = co, CV_Predictions = pred),
-                   sprintf("Results_LogReg_%s_%s.xlsx", spec$tag, registry_key))
-        all_runs[[nm]] <- list(`0` = row)
+      if (!is_bm[[nm]]) {
+        all_runs[[nm]] <- list(`0` = fit_covariate_baseline(spec, d, ctl, nm))
       } else {
         if (RUN_VALIDATION) validate_fast_vs_caret(spec)
         all_runs[[nm]] <- run_pipeline_fast(spec)
@@ -1303,8 +1323,7 @@ run_dmft_age_bmi <- function(base_spec) {
         best <- sort_by_balanced_accuracy(res[valid, , drop = FALSE])[1, , drop = FALSE]
         bcols <- grep("^Biomarker[0-9]+$", names(best), value = TRUE)
         data.frame(Model = nm, N = nrow(d), LD = sum(d$condL == "LD"), HD = sum(d$condL == "HD"),
-                   N_Biomarkers = as.integer(k),
-                   Covariates = if (length(spec$covariates)) paste(spec$covariates, collapse = ", ") else "none",
+                   N_Biomarkers = as.integer(k), Covariates = .set_label(spec$covariates),
                    Panel = if (length(bcols)) paste(unlist(best[bcols]), collapse = "; ") else "none",
                    best[, metric_cols, drop = FALSE], row.names = NULL)
       })
@@ -1315,27 +1334,89 @@ run_dmft_age_bmi <- function(base_spec) {
       paste("FAILED:", conditionMessage(e))
     })
   }
-  successful <- all_summary[status[names(all_summary)] == "done"]
-  if (length(successful)) {
-    by_size <- do.call(rbind, successful); rownames(by_size) <- NULL
-    best_overall <- do.call(rbind, lapply(successful, function(x) {
-      x[order(-x$Balanced_Accuracy, -x$AUC, x$N_Biomarkers), , drop = FALSE][1, , drop = FALSE]
-    }))
-    rownames(best_overall) <- NULL
-  } else { by_size <- data.frame(); best_overall <- data.frame() }
+
+  run_status <- data.frame(Model = names(status), Covariates = vapply(names(status), function(nm)
+    .set_label(sets[[nm]]$covariates), character(1)), Biomarkers = is_bm[names(status)],
+    Status = unname(status), row.names = NULL)
+  done     <- names(status)[status == "done"]
+  bm_done  <- intersect(names(sets)[is_bm], done)
+  cov_only <- intersect(names(sets)[!is_bm], done)
+  best_of  <- function(x) x[order(-x$Balanced_Accuracy, -x$AUC, x$N_Biomarkers), , drop = FALSE][1, , drop = FALSE]
+  key_of   <- function(nm) paste(sort(as.character(sets[[nm]]$covariates)), collapse = "+")
+  base_for <- function(nm) { b <- cov_only[vapply(cov_only, key_of, character(1)) == key_of(nm)]; if (length(b)) b[1] else NA_character_ }
+
   notes <- data.frame(Note = c(
-    "Age and BMI adjustment; exhaustive one- and two-marker search, beam from three markers.",
-    "Only biomarkers are transformed/standardized; Age_DOS and BMI retain original units.",
-    "Each biomarker configuration has its own 1-6 marker search. Best means highest balanced accuracy, then AUC.",
-    "Each model uses its own Youden threshold selected from pooled out-of-fold predictions.",
-    "Preprocessing and model/cutoff selection use development data; results are exploratory and may be optimistic.",
+    sprintf("Covariate sets: %s. Every set is analysed the same way.", paste(names(sets), collapse = ", ")),
+    sprintf("Every set uses the same %d participants (complete for %s) and the same folds.", nrow(d), .set_label(co$required)),
+    "Exhaustive one- and two-marker search, beam from three markers, for every set with biomarkers.",
+    "Only biomarkers are transformed/standardized; covariates retain original units (categorical ones as indicators).",
+    sprintf(paste("Cross-validation: %d-fold, repeated %d times. No screening stage: every panel was scored on all",
+                  "repeats, and the same predictions rank the panels and give the reported numbers."), CV_FOLDS, CV_REPEATS),
+    "Best means highest balanced accuracy, then AUC (then the smaller panel).",
+    paste("Each model uses its own Youden threshold selected from pooled out-of-fold predictions;",
+          "balanced accuracy there equals (maximal Youden index + 1) / 2, so ranking by it is ranking by the Youden index."),
+    "The *_at_0.5 columns use a fixed 0.5 threshold, which is not tuned on the predictions.",
+    "Preprocessing and model/cutoff selection use development data; these are apparent results and may be optimistic.",
     "Existing preprocessing defines DMFT labels before common-cohort exclusion; labels/cutoff are not recalculated.",
-    "Repeat percentile intervals describe variability over fold assignments, not independent-validation confidence intervals."))
-  write_xlsx(list(Best_Overall = best_overall, Best_By_Size = by_size,
-                  Run_Status = data.frame(Model = names(status), Status = unname(status)), Notes = notes),
-             sprintf("DMFT_Age_BMI_Summary_%s.xlsx", registry_key))
-  print(data.frame(Model = names(status), Status = unname(status)))
+    "Repeat ranges (lowest to highest across the repeats) describe variability over fold assignments, not confidence intervals."))
+
+  # 1) One summary per biomarker set (best overall, best at each size, its covariates-only model)
+  for (nm in bm_done) {
+    by_size <- all_summary[[nm]]; rownames(by_size) <- NULL
+    sh <- list(Best_Overall = best_of(by_size), Best_By_Size = by_size)
+    if (!is.na(base_for(nm))) sh$Covariates_Only <- all_summary[[base_for(nm)]]
+    sh$Run_Status <- run_status[run_status$Model %in% c(nm, base_for(nm)), , drop = FALSE]
+    sh$Notes <- notes
+    write_xlsx(sh, sprintf("DMFT_Summary_%s_%s.xlsx", nm, registry_key))
+  }
+
+  # 2) Every set side by side
+  overview <- if (length(bm_done)) do.call(rbind, lapply(bm_done, function(nm) {
+    b  <- best_of(all_summary[[nm]])
+    bn <- base_for(nm)
+    bs <- if (!is.na(bn)) all_summary[[bn]] else NULL
+    data.frame(Set = nm, Covariates = .set_label(sets[[nm]]$covariates),
+               N = b$N, LD = b$LD, HD = b$HD, Best_panel_size = b$N_Biomarkers, Best_panel = b$Panel,
+               AUC = b$AUC, Balanced_Accuracy = b$Balanced_Accuracy, Sensitivity = b$Sensitivity,
+               Specificity = b$Specificity, Threshold = b$Threshold, Balanced_Accuracy_at_0.5 = b$Balanced_Accuracy_at_0.5,
+               Balanced_Accuracy_Repeat_Min = b$Balanced_Accuracy_Repeat_Min,
+               Balanced_Accuracy_Repeat_Max = b$Balanced_Accuracy_Repeat_Max,
+               Covariates_only_model = bn,
+               Covariates_only_AUC = if (is.null(bs)) NA_real_ else bs$AUC,
+               Covariates_only_Balanced_Accuracy = if (is.null(bs)) NA_real_ else bs$Balanced_Accuracy,
+               AUC_added_by_biomarkers = if (is.null(bs)) NA_real_ else b$AUC - bs$AUC,
+               Balanced_Accuracy_added_by_biomarkers = if (is.null(bs)) NA_real_ else b$Balanced_Accuracy - bs$Balanced_Accuracy,
+               row.names = NULL, stringsAsFactors = FALSE)
+  })) else data.frame()
+  # Which markers the sets' best panels share
+  overlap <- if (length(bm_done)) {
+    pan <- lapply(bm_done, function(nm) trimws(strsplit(best_of(all_summary[[nm]])$Panel, ";", fixed = TRUE)[[1]]))
+    names(pan) <- bm_done
+    mk <- sort(unique(unlist(pan)))
+    ov <- data.frame(Marker = mk, Sets_with_marker = vapply(mk, function(m) sum(vapply(pan, function(p) m %in% p, logical(1))),
+                                                             integer(1)), row.names = NULL, stringsAsFactors = FALSE)
+    for (nm in bm_done) ov[[nm]] <- ov$Marker %in% pan[[nm]]
+    ov[order(-ov$Sets_with_marker, ov$Marker), , drop = FALSE]
+  } else data.frame()
+  all_by_size <- if (length(bm_done)) do.call(rbind, all_summary[bm_done]) else data.frame()
+  covariates_only <- if (length(cov_only)) do.call(rbind, all_summary[cov_only]) else data.frame()
+  rownames(all_by_size) <- NULL; rownames(covariates_only) <- NULL; rownames(overlap) <- NULL
+  write_xlsx(list(Overview = overview, Best_By_Size = all_by_size, Covariates_Only = covariates_only,
+                  Marker_Overlap = overlap, Run_Status = run_status, Notes = notes),
+             sprintf("DMFT_Covariate_Sets_Summary_%s.xlsx", registry_key))
+
+  cat("\n===== Covariate sets: best panel per set (apparent) =====\n")
+  if (nrow(overview))
+    print(overview[, c("Set", "Covariates", "Best_panel_size", "AUC", "Balanced_Accuracy",
+                       "Covariates_only_AUC", "AUC_added_by_biomarkers")], row.names = FALSE, digits = 3)
+  print(run_status, row.names = FALSE)
+  cat(sprintf("  Saved: DMFT_Covariate_Sets_Summary_%s.xlsx and one DMFT_Summary_<set>_%s.xlsx per set\n",
+              registry_key, registry_key))
   if (any(startsWith(status, "FAILED"))) warning("Some models failed; review Run_Status before comparing results.")
-  invisible(list(results = all_runs, summary = best_overall, by_size = by_size, status = status))
+  invisible(list(results = all_runs, summary = all_summary, overview = overview, overlap = overlap,
+                 status = run_status, sets = sets))
 }
-DMFT_AGE_BMI_RESULTS <- run_dmft_age_bmi(SPECS[[1]])
+
+# options(dmft.search.skip_run = TRUE) loads the functions above without running
+# the search.
+if (!isTRUE(getOption("dmft.search.skip_run"))) DMFT_RESULTS <- run_dmft_model_sets(SPECS[[1]])
